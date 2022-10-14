@@ -55,7 +55,7 @@ end
 function working_villages.failed_pos_test(pos)
 	local key = minetest.pos_to_string(pos)
 	local exp = failed_pos_data[key]
-	return exp ~= nul and exp >= os.clock()
+	return exp ~= nil and exp >= os.clock()
 end
 
 -- working_villages.is_job reports whether a item is a job item by the name.
