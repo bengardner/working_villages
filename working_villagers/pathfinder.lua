@@ -118,7 +118,11 @@ local function get_neighbors(current_pos, entity_height, entity_jump_height, ent
 			-- check headroom, if we are jumping, we need extra
 			local needed_height = entity_height
 			if neighbor_ground_level.y > current_pos.y then
+				-- need to be able to jump up to the next level
 				needed_height = needed_height + entity_jump_height - (neighbor_ground_level.y - current_pos.y)
+			elseif neighbor_ground_level.y < current_pos.y then
+				-- need to be able to walk into the area and drop
+				needed_height = needed_height + (current_pos.y - neighbor_ground_level.y)
 			end
 			neighbor_clearance = check_clearance(neighbor_pos, needed_height)
 		end
