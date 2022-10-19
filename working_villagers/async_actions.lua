@@ -106,6 +106,13 @@ function working_villages.villager:collect_nearest_item_by_condition(cond, searc
 	end
 end
 
+-- delay the async action by @step_count steps
+function working_villages.villager:delay(step_count)
+	for _=0,step_count do
+		coroutine.yield()
+	end
+end
+
 local drop_range = {x = 2, y = 10, z = 2}
 
 function working_villages.villager:dig(pos,collect_drops)
@@ -238,13 +245,22 @@ function working_villages.villager:place(item,pos)
 		--minetest.place_node(pos, item) --loses param2
 		stack:take_item(1)
 	else
+		local before_node = minetest.get_node(pos)
+		local before_count = stack:get_count()
 		local itemdef = stack:get_definition()
 		if itemdef.on_place then
 			stack = itemdef.on_place(stack, self, pointed_thing)
 		elseif itemdef.type=="node" then
 			stack = minetest.item_place_node(stack, self, pointed_thing)
-			--minetest.set_node(pointed_thing.above, {name = itemname})
-			--minetest.place_node(pos, {name = itemname}) --Place node with the same effects that a player would cause
+		end
+		local after_node = minetest.get_node(pos)
+		-- if the node didn't change, then the callback failed
+		if before_node.name == after_node.name then
+			return false, fail.protected
+		end
+		-- if in creative mode, the callback may not reduce the stack
+		if before_count == stack:get_count() then
+			stack:take_item(1)
 		end
 	end
 	--take item
