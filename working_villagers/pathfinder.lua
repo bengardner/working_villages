@@ -2,7 +2,7 @@ local S = minetest.get_translator("testpathfinder")
 
 local pathfinder = {}
 
-local debug_pathfinder = true
+local pathfinder.debug = true
 
 --[[
 minetest.get_content_id(name)
@@ -72,7 +72,7 @@ end
 
 -- Detect if a node collides with objects.
 -- This is for clearance tests.
-local function is_solid_node(node)
+local function is_node_collidable(node)
 	-- We can pass through doors, even though they are 'walkable'
 	if string.find(node.name,"doors:") then
 		return false
@@ -88,7 +88,7 @@ end
 
 -- Detect if we can stand on the node.
 -- We can stand on walkable and climbable nodes.
-local function is_ground_node(node)
+local function is_node_standable(node)
 	-- We don't want to stand on a door
 	if string.find(node.name,"doors:") then
 		return false
@@ -121,7 +121,7 @@ local function check_clearance2(cpos, height, jump_height)
 	for i = 1, height + jump_height do
 		local hpos = {x=cpos.x, y=cpos.y+i, z=cpos.z}
 		local node = minetest.get_node(hpos)
-		if is_solid_node(node) then
+		if is_node_collidable(node) then
 			return i >= height, false
 		end
 	end
@@ -135,7 +135,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 	local tmp_pos = { x=pos.x, y=pos.y, z=pos.z }
 	local node = minetest.get_node(tmp_pos)
 	local height = 0
-	if is_solid_node(node) then
+	if is_node_collidable(node) then
 		-- upward scan looks for a not solid node
 		repeat
 			height = height + 1
@@ -144,7 +144,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 			end
 			tmp_pos.y = tmp_pos.y + 1
 			node = minetest.get_node(tmp_pos)
-		until not(is_solid_node(node))
+		until not(is_node_collidable(node))
 		return tmp_pos
 	else
 		-- downward scan looks for a 'ground node'
@@ -155,7 +155,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 			end
 			tmp_pos.y = tmp_pos.y - 1
 			node = minetest.get_node(tmp_pos)
-		until is_ground_node(node)
+		until is_node_standable(node)
 		tmp_pos.y = tmp_pos.y + 1
 		return tmp_pos
 	end
@@ -405,7 +405,7 @@ function pathfinder.find_path(pos, endpos, entity)
 				table.insert(path, reverse_path[idx])
 			end
 			--print("path length: "..#reverse_path)
-			if debug_pathfinder then
+			if pathfinder.debug == true then
 				show_particles(path)
 			end
 			return path, reverse_path
@@ -451,6 +451,8 @@ end
 -- FIXME: external uses are probably incompatible with climbables
 pathfinder.walkable = walkable
 pathfinder.is_node_climbable = is_node_climbable
+pathfinder.is_node_standable = is_node_standable
+pathfinder.is_node_collidable = is_node_collidable
 
 function pathfinder.get_ground_level(pos)
 	return get_neighbor_ground_level(pos, 30927, 30927)
