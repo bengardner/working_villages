@@ -584,7 +584,7 @@ end
 -- calculate vector.distance(v1, v2)**2
 -- d^2 = dx^2 + dy^2 + dz^2
 local function xyz_dist2(v1, v2)
-	local d = vector.direction(v1, v2)
+	local d = vector.subtract(v1, v2)
 	return d.x * d.x + d.y * d.y + d.z * d.z
 end
 
@@ -607,7 +607,7 @@ Calculate a path to the closest position inside of the sphere.
 ]]
 function pathfinder.find_path_sphere(start_pos, entity, dest_pos, dest_radius)
 	-- use a simple single-node dest if dest_radius is too small
-	r2 = sanatize_radius(dest_radius)
+	local r2 = sanatize_radius(dest_radius)
 	if r2 < 2 then
 		return pathfinder.find_path(start_pos, dest_pos, entity)
 	end
@@ -616,11 +616,11 @@ function pathfinder.find_path_sphere(start_pos, entity, dest_pos, dest_radius)
 	local endpos = {
 		x=dest_pos.x, y=dest_pos.y, z=dest_pos.z,
 		inside=function(self, pos, hash)
-			local d2 = xyz_dist2(dest_pos, pos)
+			local d2 = xyz_dist2(self, pos)
 			return d2 <= r2
 		end
 	}
-	return pathfinder.find_path(pos, endpos, entity)
+	return pathfinder.find_path(start_pos, endpos, entity)
 end
 
 --[[
@@ -630,25 +630,25 @@ Calculate a path to the closest position inside of the cylinder.
 @dest_height must be >= 1
 ]]
 function pathfinder.find_path_cylinder(start_pos, entity, dest_pos, dest_radius, dest_height)
-	r2 = sanatize_radius(dest_radius)
+	local r2 = sanatize_radius(dest_radius)
 	if dest_height == nil or dest_height < 1 then
 		dest_height = 1
 	end
 	-- must be less than max_y
-	local max_y = dest_pos.y + dest_height
+	local max_y = dest_pos.y + dest_height - 1
 
 	local endpos = {
 		x=dest_pos.x, y=dest_pos.y, z=dest_pos.z,
 		inside=function(self, pos, hash)
 			-- check top/bot of cylinder
-			if pos.y < dest_pos.y or pos.y >= max_y then
+			if pos.y < dest_pos.y or pos.y > max_y then
 				return false
 			end
-			local d2 = xz_dist2(dest_pos, pos)
+			local d2 = xz_dist2(self, pos)
 			return d2 <= r2
 		end
 	}
-	return pathfinder.find_path(pos, endpos, entity)
+	return pathfinder.find_path(start_pos, endpos, entity)
 end
 
 --[[
