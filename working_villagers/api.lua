@@ -2,6 +2,7 @@
 
 local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
+local pathfinder = working_villages.require("pathfinder")
 
 working_villages.animation_frames = {
   STAND     = { x=  0, y= 79, },
@@ -301,13 +302,30 @@ end
 
 -- working_villages.villager.change_direction change direction to destination and velocity vector.
 function working_villages.villager:change_direction(destination)
-  local position = self.object:get_pos()
-  local direction = vector.subtract(destination, position)
-  direction.y = 0
-  local velocity = vector.multiply(vector.normalize(direction), 1.5)
+	local position = self.object:get_pos()
+	local direction = vector.subtract(destination, position)
 
-  self.object:set_velocity(velocity)
-  self:set_yaw_by_direction(direction)
+	local node = minetest.get_node(position)
+	if pathfinder.is_node_climbable(node) then
+		if math.abs(direction.y) > 0.2 then --(math.abs(direction.x) + math.abs(direction.z)) then
+			local rpos = vector.round(position)
+			if direction.y > 0 then
+				self.object:set_velocity{ x=0, y=1, z=0 }
+			else
+				self.object:set_velocity{ x=0, y=-1, z=0 }
+			end
+			-- center on and face the ladder
+			self.object:set_pos{x=rpos.x, y=position.y, z=rpos.z}
+			self:set_yaw_by_direction(minetest.wallmounted_to_dir(node.param2))
+			return
+		end
+	end
+
+	direction.y = 0
+	local velocity = vector.multiply(vector.normalize(direction), 1.5)
+
+	self.object:set_velocity(velocity)
+	self:set_yaw_by_direction(direction)
 end
 
 -- working_villages.villager.change_direction_randomly change direction randonly.
@@ -395,20 +413,28 @@ function working_villages.villager:is_near(pos, distance)
 end
 
 function working_villages.villager:handle_liquids()
-  local ctrl = self.object
-  local inside_node = minetest.get_node(self.object:get_pos())
-  -- perhaps only when changed
-  if minetest.get_item_group(inside_node.name,"liquid") > 0 then
-    -- swim
-    local viscosity = minetest.registered_nodes[inside_node.name].liquid_viscosity
-    ctrl:set_acceleration{x = 0, y = -self.initial_properties.weight/(100*viscosity), z = 0}
-  elseif minetest.registered_nodes[inside_node.name].climbable then
-    --go down slowly
-    ctrl:set_acceleration{x = 0, y = -0.1, z = 0}
-  else
-    -- fall
-    ctrl:set_acceleration{x = 0, y = -self.initial_properties.weight, z = 0}
-  end
+	local ctrl = self.object
+	local pos = self.object:get_pos()
+	local inside_node = minetest.get_node(pos)
+	-- perhaps only when changed
+	if minetest.get_item_group(inside_node.name,"liquid") > 0 then
+		-- swim
+		local viscosity = minetest.registered_nodes[inside_node.name].liquid_viscosity
+		ctrl:set_acceleration{x = 0, y = -self.initial_properties.weight/(100*viscosity), z = 0}
+	elseif pathfinder.is_node_climbable(inside_node) then
+		--go down slowly
+		--ctrl:set_acceleration{x = 0, y = -0.1, z = 0}
+		ctrl:set_acceleration{x = 0, y = 0, z = 0}
+	else
+		-- Mobs can stand on climbable nodes, but the engine doesn't collide, so
+		-- they fall. Stop that.
+		if pathfinder.is_node_climbable(minetest.get_node({x=pos.x, y=pos.y-1, z=pos.z})) then
+			ctrl:set_acceleration{x = 0, y = 0, z = 0}
+		else
+			-- fall. If standing on a walkable node, the engine will stop the fall.
+			ctrl:set_acceleration{x = 0, y = -self.initial_properties.weight, z = 0}
+		end
+	end
 end
 
 function working_villages.villager:jump()

@@ -24,6 +24,23 @@ function working_villages.villager:go_to(pos)
 	self:change_direction(self.path[1])
 	self:set_animation(working_villages.animation_frames.WALK)
 
+	-- NOTE: If we will do a sharp turn (90 deg) when we hit the current
+	-- waypoint, then we need to reach exactly the cell center. That means
+	-- updating the facing direction on every step.
+	-- This does a 2D dot product of the vector pos->wp1 and wp1->wp2.
+	-- If over 60 deg, then use exact positioning.
+	local function need_exact_pos()
+		if #self.path < 2 then return false end
+		local pos = self.object:get_pos()
+		local wp1 = self.path[1]
+		local wp2 = self.path[2]
+		local v1 = vector.normalize(vector.subtract(pos, wp1))
+		local v2 = vector.normalize(vector.subtract(wp1, wp2))
+		local dp = v1.x * v2.x + v1.z * v2.z
+		return dp <= 0.5 -- 60+ deg
+	end
+	local exact_step = need_exact_pos()
+
 	while #self.path ~= 0 do
 		self:count_timer("go_to:find_path")
 		self:count_timer("go_to:change_dir")
@@ -41,16 +58,18 @@ function working_villages.villager:go_to(pos)
 				end
 			else
 				self.path = path
+				exact_step = need_exact_pos()
 			end
 		end
 
-		if self:timer_exceeded("go_to:change_dir",30) then
+		if exact_step or self:timer_exceeded("go_to:change_dir",30) then
 			self:change_direction(self.path[1])
 		end
 
 		-- follow path
 		if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
 			table.remove(self.path, 1)
+			exact_step = need_exact_pos()
 
 			if #self.path == 0 then -- end of path
 				 --keep walking another step for good measure
