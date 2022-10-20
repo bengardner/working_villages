@@ -117,41 +117,53 @@ end
 Check if we have clear nodes above cpos.
 This is used to see if we can walk into a neighboring node and/or jump into it.
 
-For example, if height=2 and jump_height=1 (typical values), we will check 3 nodes
+For example, if height=2 and jump_height=2, we will check 4 nodes
 starting at cpos and going +y.
 
+max_y = height + math.max(jump_height, 1)
+
 The numbers below represent the nodes to check.
-The W's represent the nodes that must be clear to walk.
-The J's represent the nodes that must be clear to jump.
+ S = the nodes that must be clear to stand.
+ J = the nodes that must be clear to jump.
+ C = the nodes that must be clear to climb.
 
- - 2 J   top 2 if jumping
- - 1 J W
- - 0   W bottom 2 if walking
+ - 3 J ----- top 2 for jump
+ - 2 J C --- bottom 3 for climb
+ - 1   C S - bottom 2 for stand
+ - 0   C S
 
-To be able to walk into the node, we need to be clear on 1 & 2.
-To be able to jump into the node, we need to be clear on 2 & 3
-returns can_walk, can_jump
+To be able to stand in the node, we need to be clear on 0 & 1.
+To be able to climb in the node, we need to be clear on 0, 1, 2
+To be able to jump in(to) the node, we need to be clear on 2 & 3
+
+@cpos is the position to start checking
+@height is the number of nodes that the MOB occupies
+@jump_height is how high the MOB can jump
+@start_height sets the start of the scan, assuming the nodes are clear
+returns { stand=bool, jump=bool, climb=bool }
 --]]
 local function check_clearance(cpos, height, jump_height, start_height)
-	local can_walk = true
-	local can_jump = true
-	for i=start_height or 0, height + jump_height do
+	local ret = { stand=true, climb=true, jump=true }
+	for i=start_height or 0, height + math.max(jump_height, 1) do
 		local hpos = {x=cpos.x, y=cpos.y+i, z=cpos.z}
-		local node = minetest.get_node(hpos)
-		if is_node_collidable(node) then
-			if i < height then
-				can_walk = false
+		if is_node_collidable(minetest.get_node(hpos)) then
+			if i < height + 1 then
+				ret.climb = false
+				if i < height then
+					ret.stand = false
+				end
 			end
+			-- jump only cares if above jump_height
 			if i >= jump_height then
-				can_jump = false
-				if i >= height then
-					-- can't affect can_walk, so we are done
+				ret.jump = false
+				if i > height then
+					-- can't affect walk or climb, so we are done
 					break
 				end
 			end
 		end
 	end
-	return can_walk, can_jump
+	return ret
 end
 
 --[[
@@ -225,12 +237,12 @@ Return as an array of tables with the following members:
 local function get_neighbors(current_pos, entity_height, entity_jump_height, entity_fear_height)
 	-- Check to see if we can jump in the current pos. We can't jump to another
 	-- node if we can't jump here. We assume we can walk here because...
-	local _, can_jump = check_clearance(current_pos, entity_height, entity_jump_height)
+	local clear = check_clearance(current_pos, entity_height, entity_jump_height)
 
 	-- Set the jump height to 0 if we can't jump. May save a few cycles, but
 	-- all the neighbors will have clear_walk==clear_jump
 	local jump_height = entity_jump_height
-	if not can_jump then
+	if not clear.jump then
 		jump_height = 0
 	end
 
@@ -241,24 +253,8 @@ local function get_neighbors(current_pos, entity_height, entity_jump_height, ent
 		local neighbor_ground = get_neighbor_ground_level(neighbor_pos, jump_height, entity_fear_height)
 		local neighbor = {}
 
-		if neighbor_ground == nil then
-			-- not-diagonal neighbors are needed to calculate diagonal clearance
-			if nidx % 2 == 1 then
-				neighbor.clear_walk, neighbor.clear_jump = check_clearance(neighbor_pos, entity_height, jump_height)
-			end
-		else
-			-- record whether we can walk or jump into the neighbor, regardless of whether it is blocked
-			if neighbor_ground.y <= current_pos.y then
-				-- just need to walk and maybe fall
-				neighbor.clear_walk, neighbor.clear_jump = check_clearance(neighbor_pos, entity_height, jump_height)
-			else
-				-- have to jump up, so won't be clear at ground level
-				neighbor.clear_walk = false
-				-- but we do check +1 at the target for extra security
-				neighbor.clear_jump, _ = check_clearance(neighbor_ground, entity_height + 1, 0)
-			end
-
-			-- record the ground position and hash
+		neighbor.clear = check_clearance(neighbor_pos, entity_height, jump_height)
+		if neighbor_ground ~= nil then
 			neighbor.pos = neighbor_ground
 			neighbor.hash = minetest.hash_node_position(neighbor_ground)
 		end
@@ -269,41 +265,41 @@ local function get_neighbors(current_pos, entity_height, entity_jump_height, ent
 	for nidx, neighbor in ipairs(neighbors) do
 		if neighbor.pos ~= nil then
 			if neighbor.pos.y > current_pos.y then
-				if not (can_jump and neighbor.clear_jump) then
+				if not (clear.jump and neighbor.clear.jump) then
 					-- can't jump from current location to neighbor
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = neighbors[dir_add(nidx, -1)]
 					local n_cw = neighbors[dir_add(nidx, 1)]
-					if n_ccw.clear_jump and n_cw.clear_jump then
-						neighbor.cost = 15 + 14 -- 15 for jump, 14 for diag
+					if n_ccw.clear.jump and n_cw.clear.jump then
+						neighbor.cost = 14 -- + 15 -- 15 for jump, 14 for diag
 					end
 				else
 					-- not diagonal, can go
-					neighbor.cost = 15 + 10 -- 15 for jump, 10 for move
+					neighbor.cost = 10 -- + 15 -- 15 for jump, 10 for move
 				end
 			else -- neighbor.pos.y <= current_pos.y
-				if not neighbor.clear_walk then
+				if not neighbor.clear.stand then
 					-- can't walk into that neighbor
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = neighbors[dir_add(nidx, -1)]
 					local n_cw = neighbors[dir_add(nidx, 1)]
-					if n_ccw.clear_walk and n_cw.clear_walk then
+					if n_ccw.clear.stand and n_cw.clear.stand then
 						-- 14 for diag, 8 for each node drop
-						neighbor.cost = 14 + 8 * (current_pos.y - neighbor.pos.y)
+						neighbor.cost = 14 -- + 8 * (current_pos.y - neighbor.pos.y)
 					end
 				else
 					-- 10 for diag, 8 for each node drop
-					neighbor.cost = 10 + 8 * (current_pos.y - neighbor.pos.y)
+					neighbor.cost = 10 -- + 8 * (current_pos.y - neighbor.pos.y)
 				end
 			end
-			if neighbor.cost ~= nil then
+			if false and neighbor.cost ~= nil then
 				-- double the cost if neighboring cells are not clear
 				-- FIXME: this is a misguided attempt to get the MOB to stay away
 				--        from corners. Also could try a cost hit for 90 turns.
 				--        That would require propagating the direction.
 				for dd=-2,2,1 do
 					if dd ~= 0 then
-						if neighbors[dir_add(nidx, dd)].clear_walk ~= true then
+						if neighbors[dir_add(nidx, dd)].clear.stand ~= true then
 							neighbor.cost = neighbor.cost * 2
 							break
 						end
@@ -313,25 +309,16 @@ local function get_neighbors(current_pos, entity_height, entity_jump_height, ent
 		end
 	end
 
-	-- Check if we are in a climbable and can climb
-	if is_node_climbable(minetest.get_node(current_pos)) then
-		-- We need to check 1 node above height. We already scanned upward for
-		-- can_jump. If we can't jump and the jump_height > 1, then we can check
-		-- 1 node above the head.
-		local can_climb = can_jump
-		if not can_climb and entity_jump_height > 1 then
-			can_climb = not is_node_collidable(minetest.get_node({x=current_pos.x,y=current_pos.y+entity_height+1,z=current_pos.z}))
-		end
-		if can_climb then
-			local npos = {x=current_pos.x, y=current_pos.y+1, z=current_pos.z}
-			table.insert(neighbors, {
-				pos = npos,
-				hash = minetest.hash_node_position(npos),
-				cost = 20})
-		end
+	-- Check if we can climb and we are in a climbable node
+	if clear.climb and is_node_climbable(minetest.get_node(current_pos)) then
+		local npos = {x=current_pos.x, y=current_pos.y+1, z=current_pos.z}
+		table.insert(neighbors, {
+			pos = npos,
+			hash = minetest.hash_node_position(npos),
+			cost = 20})
 	end
 
-	-- Check if we standing on a climbable and add a down climb
+	-- Check if we can climb down
 	local npos = {x=current_pos.x, y=current_pos.y-1, z=current_pos.z}
 	if is_node_climbable(minetest.get_node(npos)) then
 		table.insert(neighbors, {
@@ -461,37 +448,35 @@ end
 
 --[[
 This is the pathfinder function.
-@pos is the starting position
-@endpos is the ending position or area
-@entity a table that provides collisionbox, fear_height, and jump_height
+It will always return a pair of paths with at least one position.
 
-If @endpos has a method "inside(self, pos, hash)", then that is called to test
-whether a position is in the end area. @endpos must contain x,y,z.
-That is the center of the area and is used if no path could be found.
-It is also used to estimate the distance.
+@start_pos is the starting position
+@end_pos is the ending position or area, must contain x,y,z
+@entity a table that provides: collisionbox, fear_height, and jump_height
 
-Areas are treated as follows: Build a path for the center. End early.
+If @end_pos has a method "inside(self, pos, hash)", then that is called to test
+whether a position is in the end area. That allows the path to end early.
 --]]
-function pathfinder.find_path(pos, endpos, entity)
-	assert(pos ~= nil and pos.x ~= nil and pos.y ~= nil and pos.z ~= nil)
-	assert(endpos ~= nil and endpos.x ~= nil and endpos.y ~= nil and endpos.z ~= nil)
-	--print("searching for a path from:"..minetest.pos_to_string(pos).." to:"..minetest.pos_to_string(endpos))
+function pathfinder.find_path(start_pos, end_pos, entity)
+	minetest.log("action", "find_path:"..minetest.pos_to_string(start_pos))
+	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
+	assert(end_pos ~= nil and end_pos.x ~= nil and end_pos.y ~= nil and end_pos.z ~= nil)
+	--print("searching for a path from:"..minetest.pos_to_string(pos).." to:"..minetest.pos_to_string(end_pos))
 
-	local start_index = minetest.hash_node_position(pos)
-	local target_index = minetest.hash_node_position(endpos)
+	local start_index = minetest.hash_node_position(start_pos)
+	local target_index = minetest.hash_node_position(end_pos)
 
-	if endpos.inside == nil then
+	if end_pos.inside == nil then
 		-- don't modify parameters
-		endpos = { x=endpos.x, y=endpos.y, z=endpos.z, inside=function(self, pos, hash) return hash == target_index end }
+		end_pos = { x=end_pos.x, y=end_pos.y, z=end_pos.z, inside=function(self, pos, hash) return hash == target_index end }
 	end
 
 	local openSet = slist.new() -- slist of active "walkers"
 	local closedSet = {}        -- retired "walkers"
 
-	local h_start = get_estimated_cost(pos, endpos)
-	openSet:insert({
-		hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
-		pos = pos, hash = minetest.hash_node_position(pos)})
+	local h_start = get_estimated_cost(start_pos, end_pos)
+	openSet:insert({hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
+	                pos = start_pos, hash = minetest.hash_node_position(start_pos)})
 
 	-- Entity values
 	local entity_height = 2
@@ -504,54 +489,63 @@ function pathfinder.find_path(pos, endpos, entity)
 		entity_jump_height = entity.jump_height or 1
 	end
 
+	-- return a path and reverse path consisting of only the dest
+	-- this is used for the two "impossible" error paths
+	local function failed_path()
+		local tmp = { vector.new(end_pos) }
+		return tmp, tmp
+	end
+
+	local function collect_path(end_hash)
+		-- trace backwards to the start node to create the reverse path
+		local reverse_path = {}
+		local current_index = end_hash
+		repeat
+			local ref = closedSet[current_index]
+			if ref == nil then
+				-- FIXME: this is an "impossible" error condition
+				minetest.log("warning", "hash error")
+				return failed_path()
+			end
+			table.insert(reverse_path, ref.pos)
+			current_index = ref.parent
+		until start_index == current_index
+
+		-- iterate backwards on reverse_path to build path
+		local path = {}
+		for idx=#reverse_path,1,-1 do
+			table.insert(path, reverse_path[idx])
+		end
+		if pathfinder.debug == true then
+			show_particles(path)
+		end
+		return path, reverse_path
+	end
+
+	-- iterate as long as there are active walkers
 	while openSet.count > 0 do
 		local current_values = openSet:pop_head()
 
-		-- add to the closedSet
+		-- add to the closedSet so we don't revisit this location
 		closedSet[current_values.hash] = current_values
 
-		if endpos:inside(current_values.pos, current_values.hash) then
-			--print("Found path")
-			local path = {}
-			local reverse_path = {}
-			local current_index = current_values.hash
-			repeat
-				local ref = closedSet[current_index]
-				if ref == nil then
-					return {endpos} --was empty return
-				end
-				table.insert(reverse_path, ref.pos)
-				current_index = ref.parent
-				if #path > 100 then
-					--print("path to long")
-					return
-				end
-			until start_index == current_index
-			-- iterate backwards and append to reverse_path
-			for idx=#reverse_path,1,-1 do
-				table.insert(path, reverse_path[idx])
-			end
-			--print("path length: "..#reverse_path)
-			if pathfinder.debug == true then
-				show_particles(path)
-			end
-			return path, reverse_path
+		-- check for a walker in the destination zone
+		if end_pos:inside(current_values.pos, current_values.hash) then
+			return collect_path(current_values.hash)
 		end
 
-		local current_pos = current_values.pos
+		local neighbors = get_neighbors(current_values.pos, entity_height, entity_jump_height, entity_fear_height)
 
-		local neighbors = get_neighbors(current_pos, entity_height, entity_jump_height, entity_fear_height)
-
-		for id, neighbor in pairs(neighbors) do
-			-- NOTE: assuming that if we already visited a node, then the existing cost is better
+		for _, neighbor in pairs(neighbors) do
 			if neighbor.cost ~= nil then
-				-- get_distance_to_neighbor(current_values.pos, neighbor.pos)
 				local move_cost_to_neighbor = current_values.gCost + neighbor.cost
+				-- if we already visited this node, then we only store if the new cost is less (unlikely)
 				local old_closed = closedSet[neighbor.hash]
 				if old_closed == nil or old_closed.gCost > move_cost_to_neighbor then
+					-- We also want to avoid adding a duplicate (worse) open walker
 					local old_open = openSet:get(neighbor.hash)
 					if old_open == nil or move_cost_to_neighbor < old_open.gCost then
-						local hCost = get_estimated_cost(neighbor.pos, endpos)
+						local hCost = get_estimated_cost(neighbor.pos, end_pos)
 						openSet:insert({
 							gCost = move_cost_to_neighbor,
 							hCost = hCost,
@@ -564,13 +558,28 @@ function pathfinder.find_path(pos, endpos, entity)
 				end
 			end
 		end
+
+		-- In ideal situations, we will bee-line directly towards the dest.
+		-- Complex obstacles cause an explosion of open walkers.
+		-- Prevent excessive CPU usage by limiting the number of open walkers.
+		-- The caller will travel to the end of the path and then try again.
+		-- This limit may cause failure where success would be possible.
 		if openSet.count > 100 then
-			--print("failed finding a path to:" minetest.pos_to_string(endpos))
-			return
+			minetest.log("warning", "too many walkers in "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
+			return collect_path(current_values.hash)
+		end
+
+		-- Catch running out of walkers without hitting the end.
+		-- This happens when there is no possible path to the target.
+		-- The caller should try again after following the path.
+		if openSet.count == 0 then
+			minetest.log("warning", "no path "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
+			return collect_path(current_values.hash)
 		end
 	end
-	--print("count < 1")
-	return { vector.new(endpos) }
+
+	-- FIXME: this isn't reachable
+	return failed_path()
 end
 
 -- convert the two radius values into r^2 values
