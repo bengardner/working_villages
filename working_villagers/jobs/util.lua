@@ -46,10 +46,11 @@ function func.validate_pos(pos)
 end
 
 --TODO: look in pathfinder whether defining this is even nessecary
+-- Checks to see if a MOB can stand in the location.
 function func.clear_pos(pos)
 	local node=minetest.get_node(pos)
 	local above_node=minetest.get_node({x=pos.x,y=pos.y+1,z=pos.z})
-	return not(pathfinder.walkable(node) or pathfinder.walkable(above_node))
+	return not(pathfinder.is_node_collidable(node) or pathfinder.is_node_collidable(above_node))
 end
 
 function func.walkable_pos(pos)
@@ -140,34 +141,26 @@ end
 
 func.search_surrounding = search_surrounding
 
-function func.find_adjacent_pos(pos,pred)
-	local dest_pos
+-- defines the 6 adjacent positions
+local adjacent_pos = {
+	{x=0,y=1,z=0},
+	{x=0,y=-1,z=0},
+	{x=1,y=0,z=0},
+	{x=-1,y=0,z=0},
+	{x=0,y=0,z=1},
+	{x=0,y=0,z=-1},
+}
+
+-- Check the position and the six adjacent positions
+function func.find_adjacent_pos(pos, pred)
 	if pred(pos) then
 		return pos
 	end
-	dest_pos = vector.add(pos,{x=0,y=1,z=0})
-	if pred(dest_pos) then
-		return dest_pos
-	end
-	dest_pos = vector.add(pos,{x=0,y=-1,z=0})
+	for _, dpos in ipairs(adjacent_pos) do
+		local dest_pos = vector.add(pos, dpos)
 		if pred(dest_pos) then
-		return dest_pos
-	end
-	dest_pos = vector.add(pos,{x=1,y=0,z=0})
-	if pred(dest_pos) then
-		return dest_pos
-	end
-	dest_pos = vector.add(pos,{x=-1,y=0,z=0})
-	if pred(dest_pos) then
-		return dest_pos
-	end
-	dest_pos = vector.add(pos,{x=0,y=0,z=1})
-	if pred(dest_pos) then
-		return dest_pos
-	end
-	dest_pos = vector.add(pos,{x=0,y=0,z=-1})
-	if pred(dest_pos) then
-		return dest_pos
+			return dest_pos
+		end
 	end
 	return false
 end
