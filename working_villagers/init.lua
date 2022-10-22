@@ -39,6 +39,8 @@ working_villages.require("commanding_sceptre")
 
 working_villages.require("deprecated")
 
+working_villages.require("waypoint_sign")
+
 --job helpers
 working_villages.require("jobs/util")
 working_villages.require("jobs/empty")

@@ -69,27 +69,36 @@ Minetest uses "walkable" to denote that it can collide. However, we need to
 specifically allow doors, as we can walk through those.
 --]]
 local function is_node_collidable(node)
-	-- We can pass through doors, even though they are 'walkable'
-	if string.find(node.name,"doors:") then
-		-- FIXME: this assumes that the door can be opened by the MOB.
-		-- We really need to check if the door is already open and whether the
-		-- MOB has the ability to open doors. Doors can be locked and the MOB
-		-- may not have the key.
-		return false
-	else
-		-- not a door, so return the 'walkable' field from the nodedef
-		local nodedef = minetest.registered_nodes[node.name]
-		if nodedef ~= nil then
-			return nodedef.walkable
+	if node ~= nil then
+		-- We can pass through doors, even though they are 'walkable'
+		if string.find(node.name,"doors:") then
+			-- FIXME: this assumes that the door can be opened by the MOB.
+			-- We really need to check if the door is already open and whether the
+			-- MOB has the ability to open doors. Doors can be locked and the MOB
+			-- may not have the key.
+			return false
 		else
-			return true
+			-- not a door, so return the 'walkable' field from the nodedef
+			local nodedef = minetest.registered_nodes[node.name]
+			if nodedef ~= nil then
+				return nodedef.walkable
+			end
 		end
 	end
+	return true
+end
+
+local function is_pos_collidable(pos)
+	return is_node_collidable(minetest.get_node(pos))
 end
 
 -- inverse of is_node_collidable()
 local function is_node_clear(node)
 	return not is_node_collidable(node)
+end
+
+local function is_pos_clear(pos)
+	return is_node_clear(minetest.get_node(pos))
 end
 
 --[[
@@ -103,6 +112,10 @@ local function is_node_climbable(node)
 		end
 	end
 	return false
+end
+
+local function is_pos_climbable(pos)
+	return is_node_climbable(minetest.get_node(pos))
 end
 
 --[[
@@ -453,12 +466,19 @@ It will always return a pair of paths with at least one position.
 @start_pos is the starting position
 @end_pos is the ending position or area, must contain x,y,z
 @entity a table that provides: collisionbox, fear_height, and jump_height
+@option { want_nil = return nil on failure }
 
 If @end_pos has a method "inside(self, pos, hash)", then that is called to test
 whether a position is in the end area. That allows the path to end early.
+If @end_pos has a method "outside(self, pos, hash)", then that is called to test
+whether a walker should be dropped. If that returns true, the location is outside
+of the area that we can explore.
 --]]
-function pathfinder.find_path(start_pos, end_pos, entity)
-	minetest.log("action", "find_path:"..minetest.pos_to_string(start_pos))
+function pathfinder.find_path(start_pos, end_pos, entity, options)
+	options = options or {}
+	minetest.log("action", "find_path:"
+				 .. "start " .. minetest.pos_to_string(start_pos)
+				 .. " dest " .. minetest.pos_to_string(end_pos))
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
 	assert(end_pos ~= nil and end_pos.x ~= nil and end_pos.y ~= nil and end_pos.z ~= nil)
 	--print("searching for a path from:"..minetest.pos_to_string(pos).." to:"..minetest.pos_to_string(end_pos))
@@ -492,6 +512,7 @@ function pathfinder.find_path(start_pos, end_pos, entity)
 	-- return a path and reverse path consisting of only the dest
 	-- this is used for the two "impossible" error paths
 	local function failed_path()
+		if options.want_nil then return nil end
 		local tmp = { vector.new(end_pos) }
 		return tmp, tmp
 	end
@@ -537,7 +558,8 @@ function pathfinder.find_path(start_pos, end_pos, entity)
 		local neighbors = get_neighbors(current_values.pos, entity_height, entity_jump_height, entity_fear_height)
 
 		for _, neighbor in pairs(neighbors) do
-			if neighbor.cost ~= nil then
+			if neighbor.cost ~= nil and (end_pos.outside == nil or not end_pos:outside(current_values.pos, current_values.hash))
+			then
 				local move_cost_to_neighbor = current_values.gCost + neighbor.cost
 				-- if we already visited this node, then we only store if the new cost is less (unlikely)
 				local old_closed = closedSet[neighbor.hash]
@@ -563,10 +585,11 @@ function pathfinder.find_path(start_pos, end_pos, entity)
 		-- Complex obstacles cause an explosion of open walkers.
 		-- Prevent excessive CPU usage by limiting the number of open walkers.
 		-- The caller will travel to the end of the path and then try again.
-		-- This limit may cause failure where success would be possible.
+		-- This limit may cause failure where success should be possible.
 		if openSet.count > 100 then
 			minetest.log("warning", "too many walkers in "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
-			return collect_path(current_values.hash)
+			return failed_path()
+			-- return collect_path(current_values.hash)
 		end
 
 		-- Catch running out of walkers without hitting the end.
@@ -574,7 +597,10 @@ function pathfinder.find_path(start_pos, end_pos, entity)
 		-- The caller should try again after following the path.
 		if openSet.count == 0 then
 			minetest.log("warning", "no path "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
-			return collect_path(current_values.hash)
+			-- FIXME: the unresolved path likely leads away. most common failure
+			-- is dest is above start.
+			return failed_path()
+			-- return collect_path(current_values.hash)
 		end
 	end
 
@@ -692,6 +718,176 @@ pathfinder.is_node_collidable = is_node_collidable
 
 function pathfinder.get_ground_level(pos)
 	return get_neighbor_ground_level(pos, 30927, 30927)
+end
+
+-------------------------------------------------------------------------------
+
+--[[
+How waypoints work.
+
+A 16x16x16 chunk has zero or more waypoint zones.
+A waypoint zone is a group of movement nodes that can access each other.
+That means that if you start in any node in a zone, you can reach any other
+node in the same zone.
+Obviously, a zone depends on the height, jump_height, and fear_height.
+
+There can be multiple zones in a chunk. For example, if there is a chasm down
+the middle of the chunk or there is a drop > jump_height.
+
+We calculate the zones by starting a flood fill at each walkable position in the
+chunk, starting at the bottom.
+If the position is already in another zone, then we skip that position.
+After the flood fill, we discard any nodes that are in another zone.
+Remember, fear_height is usually larger than jump_height, so a fill starting
+higher can drop down into a lower zone. We don't want overlap. A node should
+only be in one zone.
+
+Flood fill an area to find all reachable nodes in @area.
+
+@area should contain one of the following:
+ * the function "inside(self, pos, hash)" that is used to test if a position is inside the area.
+ * minp, maxp = vectors that describe the box around the area.
+
+Typical use is for building waypoint coverage maps.
+
+Waypoint creation:
+ * one or more waypoints per 16x16x16 chunk
+ * for each of the 256 positions in the X-Z plane, drop from above and find all
+   places to stand in the column. Scan reverse (bottom-up).
+   For example, if the column is (top-bottom, ' '=clear, 'X'=solid):
+     "  XX   XX     X "
+       ^3   ^2     ^1
+   We'd do a flood at each location shown with ^.
+ * if that position is aready in a waypoint coverage map, then discard
+ * call this function to get a waypoint coverage map, assign a new waypoint zone id
+ * repeat
+ * the end result will be zero (all air) or more waypoint zones.
+ * for each zone, make sure a waypoint is present
+   * if a waypoint is aready present in the area, then keep that
+   * otherwise pick a central position and put a waypoint there.
+
+Waypoint connections:
+ * each waypoint has a table of reachable waypoints in the 6 neighboring chunks
+   { neighbors = { hash=cost },
+     area = { hash, { min_hash, max_hash } -- array of either a single hash or a pair of min_hash, max_hash pair
+   }
+ * from the creation step, we should be able to get the cost between waypoints
+   in the same chunk. This is only possible if we can go from A->B, but not B->A
+
+Waypoint usage:
+ * pathfinding is done using two layers:
+   * node
+   * 16x16x16 chunk (level 1 waypoint)
+ * When resolving a path, we start by finding the chunk in which the start
+   and end reside.
+   * test the areas in each chunk to find which waypoint zone it is in.
+   * if they are in the same zone, then we use the A* algo on nodes.
+   * if not in the same zone, then we do A* on the waypoints.
+   * So, if we start in a A and the next waypoint is in B, then we do an A*
+     from pos to waypoint B with an inside check that matches the waypoint zone.
+   * repeat until we hit the last waypoint and then A* to the dest.
+   * note that we don't care where in the zone we land, since we know we can get
+     to the next waypoint zone.
+
+Storing each bit for each position would take 128 bytes (4096 bits)
+Encoding
+ 00,00,00,00 = 8 bits map to the 8 zones 0=not present 1=present
+    scan from left to right. if 1, then store the 8 byte for that zone and recurse.
+
+Waypoint areas:
+ * use a base-2 volume slicer
+
+ hash is relative to the -x,-y,-z corner
+ 16x16x16 -> 4 8x8x8 -> 4 4x4x4 -> 4 2x2x2 -> hash
+ the block are described as a hash of -x,-y,-z corner.
+ if present and no children, then the entire area is selected.
+   no children == 4 children
+ the volumes may cover air and solid nodes. they cannot cover unreachable nodes.
+ The simplest and most common area would be simply omitted.
+ That would meant that all valid standing positions can reach all other valid
+ standing positions.
+
+ {
+
+FIXME: We need some sort of generation for the chunk that changes when anything
+ in the chunk changes. That will allow us to know if the paths are current.
+ For now, we will just refresh if it has been longer than a few minutes.
+
+returns a table with key=hash, val={ gCost, hCost, fCost, parent, pos, hash }
+]]
+function pathfinder.flood_fill(start_pos, entity, area)
+	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
+	assert(area ~= nil and (area.inside ~= nil or (area.minp ~= nil and area.maxp ~= nil)))
+
+	if area.inside ~= nil then
+		minetest.log("action", string.format("flood_path: start %s func", minetest.pos_to_string(start_pos)))
+	else
+		minetest.log("action", "flood_path: "
+					 .. "start " .. minetest.pos_to_string(start_pos)
+					 .. " minp " .. minetest.pos_to_string(area.minp)
+					 .. " maxp " .. minetest.pos_to_string(area.maxp))
+	end
+
+	if area.inside == nil then
+		-- don't modify parameters
+		area = { minp=area.minp, maxp=area.maxp, inside=function(self, pos, hash)
+				return (pos.x >= self.minp.x and pos.y >= self.minp.y and pos.z >= self.minp.z and
+				        pos.x <= self.maxp.x and pos.y <= self.maxp.y and pos.z <= self.maxp.z)
+			end }
+	end
+
+	local openSet = {}   -- set of active walkers
+	local closedSet = {} -- retired "walkers"
+
+	local function add_open(item)
+		openSet[item.hash] = item
+	end
+
+	local start_hash = minetest.hash_node_position(start_pos)
+	add_open({ cost=0, parent=nil, pos=start_pos, hash=start_hash })
+
+	-- Entity values
+	local entity_height = 2
+	local entity_fear_height = 2
+	local entity_jump_height = 1
+	if entity then
+		local collisionbox = entity.collisionbox or entity.initial_properties.collisionbox
+		entity_height = math.ceil(collisionbox[5] - collisionbox[2])
+		entity_fear_height = entity.fear_height or 2
+		entity_jump_height = entity.jump_height or 1
+	end
+
+	-- iterate as long as there are active walkers
+	while true do
+		local _, item = next(openSet)
+		if item == nil then break end
+
+		-- remove from open and add to closed
+		openSet[item.hash] = nil
+		closedSet[item.hash] = item
+
+		-- gather neighbors
+		local neighbors = get_neighbors(item.pos, entity_height, entity_jump_height, entity_fear_height)
+
+		-- process neighbors
+		for _, neighbor in pairs(neighbors) do
+			if neighbor.cost ~= nil and area:inside(neighbor.pos, neighbor.hash) then
+				local cost = item.cost + neighbor.cost
+
+				-- if we already visited this node, then we only store if the new cost is less (unlikely)
+				local old_closed = closedSet[neighbor.hash]
+				if old_closed == nil or old_closed.cost > cost then
+					-- We also want to avoid adding a duplicate (worse) open walker
+					local old_open = openSet[neighbor.hash]
+					if old_open == nil or cost < old_open.cost then
+						add_open({cost = cost, parent = item.hash, pos = neighbor.pos, hash = neighbor.hash})
+					end
+				end
+			end
+		end
+	end
+
+	return closedSet
 end
 
 -------------------------------------------------------------------------------
