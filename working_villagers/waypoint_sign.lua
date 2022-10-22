@@ -4,6 +4,8 @@ local pathfinder = working_villages.require("pathfinder")
 
 local waypoint = {}
 
+local waypoint_name = "working_villages:waypoint"
+
 --[[
 waypoint.store[chunk_hash][idx][node_hash] = node_info
 ]]
@@ -26,12 +28,9 @@ function waypoint.show_particles(wz_dat)
 	local tn = "testpathfinder_waypoint.png"
 	for idx, wz in ipairs(wz_dat) do
 		local cc = wz_colors[(idx % #wz_colors)+1]
-		minetest.log("action", string.format("part cc: %s %d", cc, #cc))
-
 		local t = string.format("%s^[multiply:#%02x%02x%02x", tn, cc[1], cc[2], cc[3])
 
 		for hh, ii in pairs(wz) do
-			minetest.log("action", " **"..minetest.pos_to_string(ii.pos).." "..tostring(hh))
 			minetest.add_particle({
 				pos = {x=ii.pos.x,y=ii.pos.y-0.5+idx/8,z=ii.pos.z},
 				expirationtime = 10,
@@ -72,7 +71,19 @@ end
 -- tab is a table of hash={pos=xx}
 -- sort by x+z and pick one half way down the list
 local function find_central_pos(tab)
+	local lst = {}
+	for _, v in pairs(tab) do
+		table.insert(lst, {c=v.pos.x + v.pos.z, i=v})
+	end
 
+	if #lst == 1 then return lst[1].i end
+	if #lst == 0 then return nil end
+
+	table.sort(lst, function (a, b) return a.c < b.c end)
+	local idx = math.floor(#lst / 2)
+	minetest.log("action", string.format("find_central_pos: %d of %d items", idx, #lst))
+	ensure_waypoint_node(lst[idx].i.pos)
+	return lst[idx].i
 end
 
 -- find the hash/pos in the waypoint zone list
@@ -175,6 +186,14 @@ local chunk_adjacent = {
 	{ x=  0, y=  0, z= 16 },
 }
 
+function ensure_waypoint_node(pos)
+	local node = minetest.get_node(pos)
+	if node.name == 'air' then
+		minetest.log("action", string.format("placing waypoint at: %s", minetest.pos_to_string(pos)))
+		minetest.set_node(pos, {name=waypoint_name})
+	end
+end
+
 --[[
 Compute all connections between two adjacent chunks.
 We box the search to the two chunks.
@@ -211,7 +230,7 @@ function waypoint.link_compute(from_hash, to_hash)
 
 	for to_idx=1,#to_data do
 		local to_wz = to_data[to_idx]
-		local _, to_node = next(to_wz)
+		local to_node = find_central_pos(to_wz)
 		-- use the first node as a dummy end pos. any would work. closest to the 'from' would be best
 		local endpos = { x=to_node.pos.x, y=to_node.pos.y, z=to_node.pos.z,
 		                 wz=to_wz, inside=inside_wzone, outside=outside_wzone,
@@ -219,7 +238,7 @@ function waypoint.link_compute(from_hash, to_hash)
 
 		for from_idx=1,#from_data do
 			local from_wz = from_data[from_idx]
-			local _, from_node = next(from_wz)
+			local from_node = find_central_pos(from_wz)
 
 			-- use any start position, although the closest would be best
 			local path = pathfinder.find_path(from_node.pos, endpos, nil, { want_nil=true })
@@ -295,7 +314,7 @@ local function do_waypoint_flood(user, pos)
 	waypoint.link_chunks(gpos)
 end
 
-minetest.register_node("working_villages:waypoint", {
+minetest.register_node(waypoint_name, {
 	description = S("Waypoint Sign for debug"),
 	drawtype = "plantlike",
 	tiles = {"waypoint_sign.png"}, -- FIXME:
@@ -321,9 +340,9 @@ minetest.register_node("working_villages:waypoint", {
 			--			 .."under "..node_under.name.." @ "..minetest.pos_to_string(pointed_thing.under)
 			--			 .."above "..node_above.name.." @ "..minetest.pos_to_string(pointed_thing.above)
 			--			 )
-			if node_under.name == "working_villages:waypoint" then
+			if node_under.name == waypoint_name then
 				do_waypoint_click(user, pointed_thing.under)
-			elseif node_above.name == "working_villages:waypoint" then
+			elseif node_above.name == waypoint_name then
 				do_waypoint_click(user, pointed_thing.above)
 			else
 				if not pathfinder.is_node_collidable(node_above) then
