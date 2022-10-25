@@ -22,7 +22,7 @@ To register a new villager use:
 
 working_villages.register_villager([entity name for the villager], {
 	hp_max     = [maximum hp],
-	weight     = [falling speed of the villager],
+	weight     = [falling acceleration of the villager],
 	mesh       = [3D mesh of the villager],
 	textures   = [texture of the villager],
 	egg_image  = [texture of the spawnegg],
@@ -38,14 +38,22 @@ examples: [register.lua](register.lua)
 * return true for sucess
 * return false, fail for failure, the failures are listed in [failures.lua](failures.lua)
 
-`go_to(pos)`
-looks for a path to pos and goes there
+`go_to(pos, radius, height)`
+Looks for a path to pos and goes there. Stops when within the radius from pos.
+If a radius is given and height is nil, then the volume is a sphere.
+If height is given, the volume is a cylinder.
 
 `dig(pos)`
-diggs the node at the position
+Digs the node at the position.
+Protections are checked.
+The position must be within a distance of 5.
 
 `place(item,pos)`
-places the given item at the position
+Places the given item at the position.
+Protections are checked.
+The position must be within a distance of 5.
 
 `goto_bed()`
-rests for the night
+Rests for the night.
+If the MOB has a bed, it will navigate to the bed and sit on it.
+Otherwise, it will sit down and rest.
