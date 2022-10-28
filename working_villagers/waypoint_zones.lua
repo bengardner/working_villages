@@ -234,7 +234,8 @@ local function wayzones_refresh_links(from_wzd, to_wzd)
 				if from_wz:exited_to(to_wz) then
 					minetest.log("action", string.format(" + wayzone_link %s => %s g=%d",
 						from_wz.key, to_wz.key, to_wzd.generation))
-					from_wz:link_add(to_wz)
+					from_wz:link_add_to(to_wz)
+					to_wz:link_add_from(from_wz)
 				end
 			end
 		end

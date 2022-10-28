@@ -476,53 +476,57 @@ function wayzone:get_dest(from_cpos)
 	return end_pos
 end
 
--- local function that does the work
-local function wayzone_link_add(self, to_chash, to_index, to_key)
-	local ni = { chash=to_chash, index=to_index, key=to_key or wayzone.key_encode(to_hash, to_index) }
-
-	-- Add the entry if we don't already have it
-	if self.neighbors[ni.key] == nil then
-		self.neighbors[ni.key] = ni
-	end
+-- record that we have a link to self to @to_wz
+function wayzone:link_add_to(to_wz)
+	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key }
 end
 
-function wayzone:link_add_hash_idx(to_chash, to_idx)
-	wayzone_link_add(self, to_chash, to_idx, nil)
-end
-
-function wayzone:link_add(to_wz)
-	wayzone_link_add(self, to_wz.chash, to_wz.index, to_wz.key)
+-- record that we have a link from @from_wz to self
+function wayzone:link_add_from(from_wz)
+	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key }
 end
 
 -- check if we have a link to the wayzone
-function wayzone:link_test(to_wz)
+function wayzone:link_test_to(to_wz)
 	minetest.log("action", string.format("link_test: %s => %s", self.key, to_wz.key))
-	for k, v in pairs(self.neighbors) do
-		minetest.log("action", string.format("link_test:    %s", k))
-	end
-	return self.neighbors[to_wz.key] ~= nil
+	return self.link_to[to_wz.key] ~= nil
 end
 
--- delete all links to wayzones in the chunk described by to_chash
-function wayzone:link_del(to_chash)
+-- check if we have a link to the wayzone
+function wayzone:link_test_from(from_wz)
+	minetest.log("action", string.format("link_test: %s <= %s", self.key, from_wz.key))
+	return self.link_from[to_wz.key] ~= nil
+end
+
+local function wayzone_link_filter(link_tab, chash)
 	-- do a scan to see if we need to change anything
 	local found = false
-	for ni_key, ni in ipairs(self.neighbors) do
-		if ni.chash == to_chash then
+	for _, ni in ipairs(link_tab) do
+		if ni.chash == chash then
 			found = true
 			break
 		end
 	end
 	if found then
-		-- build a list of all we are keeping and replace self.neighbors
-		local neighbors = {}
-		for _, ni in ipairs(self.neighbors) do
+		-- build a list of all we are keeping and replace self.link_out
+		local link_new = {}
+		for _, ni in ipairs(link_tab) do
 			if ni.chash ~= to_chash then
-				neighbors[ni.key] = ni
+				link_new[ni.key] = ni
 			end
 		end
-		self.neighbors = neighbors
+		return link_new
 	end
+	return link_tab
+end
+
+-- delete all links to wayzones in the chunk described by other_chash
+function wayzone:link_del(other_chash)
+	self.link_to = wayzone_link_filter(self.link_to, other_chash)
+	self.link_from = wayzone_link_filter(self.link_from, other_chash)
+end
+
+function wayzone:link_refresh(to_chash)
 end
 
 --[[
@@ -565,7 +569,8 @@ function wayzone.new(cpos, index)
 	wz.visited = {} -- sparse array of 512 bytes
 	wz.exited = {} -- inside=7,1..6=outside
 	-- the neighbor entries are only the chash, index, and key fields from the wayzone
-	wz.neighbors = {} -- key=to_wz.key val={ chash=to_wz.chash, index=to_wz.index, key=to_wz.key }
+	wz.link_to = {}   -- links to other wayzones, key=other_wz.key
+	wz.link_from = {} -- links from other wayzones, key=other_wz.key
 	return setmetatable(wz, { __index = wayzone })
 end
 
