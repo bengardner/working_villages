@@ -25,6 +25,9 @@ local sorted_hash = working_villages.require("sorted_hash")
 
 local pathfinder = {}
 
+-- set to do super verbose around this node (REMOVE)
+local debug_position = { x=196, y=0, z=8 }
+
 pathfinder.debug = true
 
 --print("loading pathfinder")
@@ -46,6 +49,7 @@ local function get_estimated_cost(start_pos, end_pos)
 		return 14 * distX + 10 * (distZ - distX)
 	end
 end
+pathfinder.get_estimated_cost = get_estimated_cost
 
 -- Get the actual cost to go from one node to the next.
 -- FIXME: this isn't used. The cost is built into the neighbor selection.
@@ -138,13 +142,51 @@ local function is_pos_climbable(pos)
 	return is_node_climbable(minetest.get_node(pos))
 end
 
+-- is this a solid node that we are not allowed to stand on?
+local function is_node_stand_forbidden(node)
+	node = resolve_node(node)
+	if minetest.get_item_group(node.name, "leaves") > 0 then
+		return true
+	end
+	return false
+end
+
 --[[
 Detect if we can stand on the node.
 We can stand on walkable and climbable nodes.
 --]]
 local function is_node_standable(node)
 	node = resolve_node(node)
+	-- HACK: no walking on leaves
+	if minetest.get_item_group(node.name, "leaves") > 0 then
+		return false
+	end
 	return is_node_collidable(node) or is_node_climbable(node)
+end
+
+--[[
+Check to see how many clear nodes are at and above @pos.
+Start checking at @start_height (usually 0 or 1).
+Stop at pos.y+max_height-1.
+Returns the number of clear nodes, which can be at most max_height.
+For example if start_height=1 and max_height=3, it will check +1 and +2.
+ dy
+ +3
+ +2 x
+ +1 x
+ +0   @pos
+
+]]
+local function check_clear_height(pos, max_height, start_height)
+	start_height = start_height or 0
+	for dy = start_height,max_height-1 do
+		local pp = { x=pos.x, y=pos.y+dy, z=pos.z }
+		local node = minetest.get_node(pp)
+		if is_node_collidable(minetest.get_node(hpos)) then
+			return dy
+		end
+	end
+	return 0
 end
 
 --[[
@@ -161,12 +203,12 @@ The numbers below represent the nodes to check.
  J = the nodes that must be clear to jump.
  C = the nodes that must be clear to climb.
 
- - 3 J ----- top 2 for jump
- - 2 J C --- bottom 3 for climb
- - 1   C S - bottom 2 for stand
- - 0   C S
+ - 3 S     J ----- top 2 for jump
+ - 2 S S   J C --- bottom 3 for climb
+ - 1   S S    C W - bottom 2 for walk
+ - 0     S    C W - stand=walk or
 
-To be able to stand in the node, we need to be clear on 0 & 1.
+To be able to walk into the node, we need to be clear on 0 & 1.
 To be able to climb in the node, we need to be clear on 0, 1, 2
 To be able to jump in(to) the node, we need to be clear on 2 & 3
 
@@ -174,35 +216,60 @@ To be able to jump in(to) the node, we need to be clear on 2 & 3
 @height is the number of nodes that the MOB occupies
 @jump_height is how high the MOB can jump
 @start_height sets the start of the scan, assuming the nodes are clear
-returns { stand=bool, jump=bool, climb=bool }
+returns { walk=bool, stand=bool, jump=bool, climb=bool }
 --]]
-local function check_clearance(cpos, height, jump_height, start_height)
-	local ret = { stand=true, climb=true, jump=true }
-	for i=start_height or 0, height + math.max(jump_height, 1) do
+local function check_clearance(cpos, gpos, height, jump_height, start_height)
+	local ret = { walk=true, stand=false, climb=true, jump=true }
+	local stand_cnt = start_height or 0
+	--minetest.log("action", string.format("check_clearance: p=%s g=%s, h=%d j=%d s=%d",
+	--		minetest.pos_to_string(cpos),
+	--		minetest.pos_to_string(gpos),
+	--		height, jump_height, stand_cnt))
+	-- the 1 is for climbing
+	for i=stand_cnt, height + math.max(jump_height, 1) do
 		local hpos = {x=cpos.x, y=cpos.y+i, z=cpos.z}
 		if is_node_collidable(minetest.get_node(hpos)) then
+			--minetest.log("warning", string.format("check_clearance: %s %s, collide @ %s i=%d h=%d j=%d",
+			--		minetest.pos_to_string(cpos), minetest.pos_to_string(gpos),
+			--		minetest.pos_to_string(hpos), i, height, jump_height))
+			stand_cnt = 0
 			if i < height + 1 then
 				ret.climb = false
 				if i < height then
-					ret.stand = false
+					ret.walk = false
 				end
 			end
 			-- jump only cares if above jump_height
 			if i >= jump_height then
-				ret.jump = false
+				if i < jump_height + height then
+					ret.jump = false
+				end
 				if i > height then
 					-- can't affect walk or climb, so we are done
 					break
 				end
 			end
+		else
+			stand_cnt = stand_cnt + 1
+			if stand_cnt >= height then
+				ret.stand = true
+			end
 		end
 	end
-	--minetest.log("action", string.format(" %s clear s=%s c=%s j=%s",
+	--minetest.log("action", string.format(" %s clear w=%d s=%s c=%s j=%s",
 	--									 minetest.pos_to_string(cpos),
+	--									 tostring(ret.walk),
 	--									 tostring(ret.stand),
 	--									 tostring(ret.climb),
 	--									 tostring(ret.jump)))
 	return ret
+end
+
+--[[
+Check to see if
+]]
+local function can_move_to_neighbor(cpos, gpos, height, jump_height, fear_height)
+
 end
 
 --[[
@@ -224,6 +291,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 		repeat
 			height = height + 1
 			if height > jump_height then
+				--minetest.log("warning", string.format(" ground @ %s %s too high j=%d node=%s", minetest.pos_to_string(pos), minetest.pos_to_string(tmp_pos), jump_height, node.name))
 				return nil
 			end
 			tmp_pos.y = tmp_pos.y + 1
@@ -234,12 +302,13 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 		-- downward scan looks for a 'ground node'
 		repeat
 			if height > fall_height then
+				--minetest.log("warning", string.format(" ground @ %s too low f=%d", minetest.pos_to_string(pos), fall_height))
 				return nil
 			end
 			height = height + 1
 			tmp_pos.y = tmp_pos.y - 1
 			node = minetest.get_node(tmp_pos)
-		until is_node_standable(node)
+		until is_node_collidable(node) or is_node_climbable(node)
 		tmp_pos.y = tmp_pos.y + 1
 		return tmp_pos
 	end
@@ -279,13 +348,13 @@ local function neighbor_args(current_pos, args)
 
 	-- Check to see if we can jump in the current pos. We can't jump to another
 	-- node if we can't jump here.
-	new_args.clear = check_clearance(current_pos, args.height, args.jump_height)
+	new_args.clear = check_clearance(current_pos, current_pos, args.height, args.jump_height)
 
 	-- Set the jump height to 0 if we can't jump. May save a few cycles, but
 	-- all the neighbors will have clear_walk==clear_jump
-	if not new_args.clear.jump then
-		new_args.jump_height = 0
-	end
+	--if not new_args.clear.jump then
+	--	new_args.jump_height = 0
+	--end
 	return new_args
 end
 
@@ -311,19 +380,41 @@ local function neighbor_climb(neighbors, args)
 end
 
 -- collect neighbors without diagonals
-local function neighbor_collect_no_diag(neighbors, current_pos, args)
+local function neighbors_collect_no_diag(neighbors, args)
 	for nidx, ndir in ipairs(dir_vectors) do
 		if nidx % 2 == 1 then -- no diagonals
-			local neighbor_pos = vector.add(current_pos, ndir)
+			local neighbor_pos = vector.add(args.pos, ndir)
+			local logit = (neighbor_pos.x>=debug_position.x-1 and neighbor_pos.x<=debug_position.x+1 and
+			               neighbor_pos.z>=debug_position.z-1 and neighbor_pos.z<=debug_position.z+1)
 			local neighbor_ground = get_neighbor_ground_level(neighbor_pos, args.jump_height, args.fear_height)
+			if neighbor_ground ~= nil and is_node_stand_forbidden(vector.add(neighbor_ground, vector.new(0, -1, 0))) then
+				--minetest.log("warning", string.format(" ground @ %s not allowed", minetest.pos_to_string(neighbor_ground)))
+				neighbor_ground = nil
+			end
 			if neighbor_ground ~= nil then
-				local neighbor_clear = check_clearance(neighbor_pos, args.height, args.jump_height)
-				if neighbor.pos.y <= current_pos.y or (args.clear.jump and neighbor_clear.jump) then
+				local neighbor_clear = check_clearance(neighbor_pos, neighbor_ground, args.height, args.jump_height)
+				if logit then
+					minetest.log("warning", string.format(" ** c=%s p=%s g=%s w=%s s=%s j=%s c=%s",
+							minetest.pos_to_string(args.pos),
+							minetest.pos_to_string(neighbor_pos),
+							minetest.pos_to_string(neighbor_ground),
+							tostring(neighbor_clear.walk),
+							tostring(neighbor_clear.stand),
+							tostring(neighbor_clear.jump),
+							tostring(neighbor_clear.climb)))
+				end
+				if (neighbor_ground.y <= args.pos.y and neighbor_clear.walk) or (args.clear.jump and neighbor_clear.jump) then
 					table.insert(neighbors, {
 						pos = neighbor_ground,
 						hash = minetest.hash_node_position(neighbor_ground),
 						cost = 10
 					})
+				end
+			else
+				if logit then
+					minetest.log("warning", string.format(" ** c=%s p=%s g=nil",
+							minetest.pos_to_string(args.pos),
+							minetest.pos_to_string(neighbor_pos)))
 				end
 			end
 		end
@@ -338,9 +429,13 @@ local function neighbors_collect_diag(neighbors, args)
 	for nidx, ndir in ipairs(dir_vectors) do
 		local neighbor_pos = vector.add(args.pos, ndir)
 		local neighbor_ground = get_neighbor_ground_level(neighbor_pos, args.jump_height, args.fear_height)
+		if neighbor_ground ~= nil and is_node_stand_forbidden(vector.add(neighbor_ground, vector.new(0, -1, 0))) then
+			--minetest.log("warning", string.format(" ground @ %s not allowed", minetest.pos_to_string(neighbor_ground)))
+			neighbor_ground = nil
+		end
 		local neighbor = {}
 
-		neighbor.clear = check_clearance(neighbor_pos, args.height, args.jump_height)
+		neighbor.clear = check_clearance(neighbor_pos, neighbor_ground or neighbor_pos, args.height, args.jump_height)
 		if neighbor_ground ~= nil then
 			neighbor.pos = neighbor_ground
 			neighbor.hash = minetest.hash_node_position(neighbor_ground)
@@ -365,12 +460,12 @@ local function neighbors_collect_diag(neighbors, args)
 					neighbor.cost = 10 -- + 15 -- 15 for jump, 10 for move
 				end
 			else -- neighbor.pos.y <= args.pos.y
-				if not neighbor.clear.stand then
+				if not neighbor.clear.walk then
 					-- can't walk into that neighbor
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = n_info[dir_add(nidx, -1)]
 					local n_cw = n_info[dir_add(nidx, 1)]
-					if n_ccw.clear.stand and n_cw.clear.stand then
+					if n_ccw.clear.walk and n_cw.clear.walk then
 						-- 14 for diag, 8 for each node drop
 						neighbor.cost = 14 -- + 8 * (current_pos.y - neighbor.pos.y)
 					end
@@ -386,7 +481,7 @@ local function neighbors_collect_diag(neighbors, args)
 				--        That would require propagating the direction.
 				for dd=-2,2,1 do
 					if dd ~= 0 then
-						if n_info[dir_add(nidx, dd)].clear.stand ~= true then
+						if n_info[dir_add(nidx, dd)].clear.walk ~= true then
 							neighbor.cost = neighbor.cost * 2
 							break
 						end
@@ -483,13 +578,13 @@ function slist_new()
 end
 
 local function do_collect_path(closedSet, end_hash, start_index)
-	minetest.log("warning", string.format("collect_path: end=%x start=%x", end_hash, start_index))
+	--minetest.log("warning", string.format("collect_path: end=%x start=%x", end_hash, start_index))
 	-- trace backwards to the start node to create the reverse path
 	local reverse_path = {}
 	local cur_hash = end_hash
 	for k, v in pairs(closedSet) do
-		minetest.log("warning", string.format(" - k=%x p=%s h=%x", k,
-			minetest.pos_to_string(v.pos), v.hash))
+		--minetest.log("warning", string.format(" - k=%x p=%s h=%x", k,
+		--	minetest.pos_to_string(v.pos), v.hash))
 	end
 	while start_index ~= cur_hash and cur_hash ~= nil do
 		local ref2 = closedSet[cur_hash]
@@ -517,11 +612,16 @@ local function do_collect_path(closedSet, end_hash, start_index)
 	return path, reverse_path
 end
 
+local function nil2def(val, def)
+	if val == nil then return def end
+	return val
+end
+
 local function get_find_path_args(options, entity)
 	options = options or {}
 	local args = {
-		want_diag = options.want_diag or true,
-		want_climb = options.want_climb or true,
+		want_diag = nil2def(options.want_diag, true), -- 'or' doesn't work with bool
+		want_climb = nil2def(options.want_climb, true),
 		want_nil = options.want_nil,
 		height = options.height or 2,
 		fear_height = options.fear_height or 2,
@@ -823,22 +923,27 @@ is > jump_height).
 --]]
 function pathfinder.wayzone_flood(start_pos, area)
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
-	assert(area ~= nil and (area.inside ~= nil or (area.minp ~= nil and area.maxp ~= nil)))
+	assert(area ~= nil and area.inside ~= nil)
 
 	local args = get_find_path_args({ want_diag=false })
+	local start_node = minetest.get_node(start_pos)
+	local start_nodedef = minetest.registered_nodes[start_node.name]
+	local below_pos = vector.add(start_pos, {x=0,y=-1,z=0})
+	local below_node = minetest.get_node(below_pos)
 
-	-- create a simple minp/maxp 'inside' function if missing.
-	if area.inside == nil then
-		area = { minp=area.minp, maxp=area.maxp, inside=pathfinder.inside_minp_maxp }
-	end
+	minetest.log("action",
+		string.format("wayzone_flood @ %s %s w=%s h=%d j=%d f=%d below=%s %s",
+			minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
+			args.height, args.jump_height, args.fear_height,
+			minetest.pos_to_string(below_pos), below_node.name))
 
-	local openSet = {}    -- set of active walkers; openSet[hash] = { pos=pos, hash=hash, dy=dy }
+	local openSet = {}    -- set of active walkers; openSet[hash] = { pos=pos, hash=hash }
 	local visitedSet = {} -- retired "walkers"; visitedSet[hash] = true
 	local exitSet = {}    -- outside area or drop by more that jump_height; exitSet[hash] = true
 
 	-- wrap 'add' with a function for logging
 	local function add_open(item)
-		--minetest.log("action", string.format(" add_open %s %x dy=%d", minetest.pos_to_string(item.pos), item.hash, item.dy))
+		--minetest.log("action", string.format(" add_open %s %x", minetest.pos_to_string(item.pos), item.hash))
 		openSet[item.hash] = item
 	end
 
@@ -852,18 +957,22 @@ function pathfinder.wayzone_flood(start_pos, area)
 		local _, item = next(openSet)
 		if item == nil then break end
 
+		--minetest.log("action", string.format(" process %s %x", minetest.pos_to_string(item.pos), item.hash))
+
 		-- remove from openSet and process
 		openSet[item.hash] = nil
+		visitedSet[item.hash] = true
 		for _, n in pairs(get_neighbors(item.pos, args)) do
 			-- skip if already visited or queued
 			if visitedSet[n.hash] == nil and openSet[n.hash] == nil then
+				--minetest.log("action", string.format("   n %s %x", minetest.pos_to_string(n.pos), n.hash))
 				local dy = math.abs(n.pos.y - item.pos.y)
 				if not area:inside(n.pos, n.hash) or dy > y_lim then
 					exitSet[n.hash] = true
 				else
 					visitedSet[n.hash] = true
-					exitSet[n.hash] = nil -- might have been unreachable
-					add_open({pos = n.pos, hash = n.hash})
+					exitSet[n.hash] = nil -- might have been unreachable via another neighbor
+					add_open(n)
 				end
 			end
 		end
@@ -892,7 +1001,15 @@ function pathfinder.can_stand_at(pos, height)
 		local node = minetest.get_node(below)
 		local nodedef = minetest.registered_nodes[node.name]
 
-		minetest.log("warning", "can_stand_at: not stand " .. minetest.pos_to_string(below) .. " name="..node.name.." d="..tostring(nodedef))
+		local s = {}
+		for k, v in pairs(nodedef.groups) do
+			table.insert(s, string.format("%s=%s", k, tostring(v)))
+		end
+		minetest.log("warning",
+			string.format("can_stand_at: not stand %s name=%s groups=%s",
+				minetest.pos_to_string(below),
+				node.name,
+				table.concat(s, " ")))
 
 		return false
 	end
