@@ -73,6 +73,7 @@ local function find_path_for_player2(player, itemstack, pos1)
 
 	local time_end = minetest.get_us_time()
 	local time_diff = time_end - time_start
+
 	if not wzp then
 		minetest.chat_send_player(player:get_player_name(), S("No path!"))
 		minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
@@ -85,6 +86,9 @@ local function find_path_for_player2(player, itemstack, pos1)
 		table.insert(path, cur_pos)
 		cur_pos = wzp:next_goal(cur_pos)
 	end
+
+	time_end = minetest.get_us_time()
+	time_diff = time_end - time_start
 
 	minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
 	minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
@@ -121,6 +125,7 @@ local function find_path_or_set_algorithm(itemstack, user, pointed_thing)
 			find_path_for_player2(user, itemstack, pointed_thing.above)
 		end
 	else
+		pathfinder.node_check(pointed_thing.above)
 		-- TODO: toggle debug?
 		return itemstack
 	end

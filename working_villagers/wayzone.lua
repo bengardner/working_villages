@@ -477,13 +477,13 @@ function wayzone:get_dest(from_cpos)
 end
 
 -- record that we have a link to self to @to_wz
-function wayzone:link_add_to(to_wz)
-	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key }
+function wayzone:link_add_to(to_wz, gCost)
+	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key, gCost=gCost }
 end
 
 -- record that we have a link from @from_wz to self
-function wayzone:link_add_from(from_wz)
-	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key }
+function wayzone:link_add_from(from_wz, gCost)
+	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key, gCost=gCost }
 end
 
 -- check if we have a link to the wayzone
@@ -524,9 +524,6 @@ end
 function wayzone:link_del(other_chash)
 	self.link_to = wayzone_link_filter(self.link_to, other_chash)
 	self.link_from = wayzone_link_filter(self.link_from, other_chash)
-end
-
-function wayzone:link_refresh(to_chash)
 end
 
 --[[

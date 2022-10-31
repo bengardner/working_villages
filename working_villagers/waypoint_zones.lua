@@ -231,7 +231,7 @@ end
 
 -- refresh the links from from_wzd to to_wzd
 local function wayzones_refresh_links(from_wzd, to_wzd)
-	-- no point in looking at self-links if there are less than 2 wayzones or
+	-- No point in looking at self-links if there are less than 2 wayzones or
 	-- if either chunk has 0 wayzones
 	if (from_wzd.hash == to_wzd.hash and #from_wzd < 2) or #from_wzd == 0 or #to_wzd == 0 then
 		return
@@ -276,14 +276,29 @@ local function wayzones_refresh_links(from_wzd, to_wzd)
 end
 
 -- private function to get or regen the chunk data
-local function get_chunk_data(hash)
+local function get_chunk_data(hash, noload)
 	local wzd = wayzones.store[hash]
 	if wzd ~= nil and wzd.dirty ~= true then
 		return wzd
 	end
+	if noload == true then
+		return nil
+	end
 	return wayzones.process_chunk(minetest.get_position_from_hash(hash))
 end
 wayzones.get_chunk_data = get_chunk_data
+
+-- Set the dirty flag on a in-memory chunk so that it will be reloaded on the
+-- next get_chunk_data() call.
+local function dirty_chunk_data(pos)
+	local cpos = wayzone.normalize_pos(pos)
+	local chash = minetest.hash_node_position(cpos)
+	local wzd = wayzones.store[chash]
+	if wzd ~= nil and wzd.dirty ~= true then
+		wzd.dirty = true
+		minetest.log("action", string.format("wayzone: %s %x is now dirty", minetest.pos_to_string(cpos), chash))
+	end
+end
 
 -- refresh the links between two adjacent chunks
 function wayzones.refresh_links(chunk1_hash, chunk2_hash)
@@ -322,7 +337,7 @@ function wayzones.process_chunk(pos)
 			local clear_cnt = 0
 			local air_pos = nil
 			local stand_pos = nil
-			for y=-1,17 do
+			for y=-1,16 do
 				local tpos = { x=chunk_pos.x+x, y=chunk_pos.y+y, z=chunk_pos.z+z }
 				local node = minetest.get_node(tpos)
 
@@ -375,9 +390,6 @@ function wayzones.process_chunk(pos)
 	local time_end = minetest.get_us_time()
 	local time_diff = time_end - time_start
 
-	minetest.log("action", string.format("^^ found %d zones for %s %x in %d ms",
-		#chunk_wzd, minetest.pos_to_string(chunk_pos), chunk_hash, time_diff / 1000))
-
 	-- update the new wayzone data with old values (generation and use_clock)
 	local wpz_tab_old = wayzones.store[chunk_hash]
 	-- keep use_clock, update generation
@@ -392,6 +404,9 @@ function wayzones.process_chunk(pos)
 	chunk_wzd.hash = chunk_hash
 	chunk_wzd.adjacent = {} -- start with no adjacent info
 	wayzones.store[chunk_hash] = chunk_wzd
+
+	minetest.log("action", string.format("^^ found %d zones for %s %x in %d ms, gen=%d",
+		#chunk_wzd, minetest.pos_to_string(chunk_pos), chunk_hash, time_diff / 1000, chunk_wzd.generation))
 
 	-- update internal links
 	wayzones_refresh_links(chunk_wzd, chunk_wzd)
@@ -859,5 +874,38 @@ function wayzones.path_start(start_pos, end_pos)
 
 	return wzp
 end
+
+--[[
+I need to know when a chunk changes to re-process the cached chunk wayzones.
+The only way to do that appears to be to hook into the on_placenode and
+on_dignode callbacks. I'm assuming this is for all loaded chunk.
+I don't yet know if this handles growing trees.
+]]
+local function wayzones_on_placenode(pos, newnode, placer, oldnode, itemstack, pointed_thing)
+	local old_nodedef = minetest.registered_nodes[oldnode.name]
+	local new_nodedef = minetest.registered_nodes[newnode.name]
+	local imp = (old_nodedef.walkable or new_nodedef.walkable or
+	             old_nodedef.climbable or new_nodedef.climbable)
+	minetest.log("action",
+		string.format("wayzones: node %s placed at %s over %s important=%s",
+			newnode.name, minetest.pos_to_string(pos), oldnode.name, tostring(imp)))
+	if imp then
+		dirty_chunk_data(pos)
+	end
+end
+
+local function wayzones_on_dignode(pos, oldnode, digger)
+	local old_nodedef = minetest.registered_nodes[oldnode.name]
+	local imp = old_nodedef.walkable or old_nodedef.climbable
+	minetest.log("action",
+		string.format("wayzones: node %s removed from %s important=%s",
+			oldnode.name, minetest.pos_to_string(pos), tostring(imp)))
+	if imp then
+		dirty_chunk_data(pos)
+	end
+end
+
+minetest.register_on_placenode(wayzones_on_placenode)
+minetest.register_on_dignode(wayzones_on_dignode)
 
 return wayzones
