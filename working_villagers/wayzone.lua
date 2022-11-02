@@ -1,28 +1,46 @@
 --[[
 This is the storage for wayzone data.
 
-What we need:
- - a set of all positions in the chunk that are part of the zone
- - the member positiions will only be tested
- - a set of all exit positions, or links to another zone
- - the exit positions can be in 7 groups:
-   - internal (between zones inside the chunk)
-   - to each of the 6 adjacent chunks
- - the exit positions will only be iterated (no lookup)
- - all position are clear and *above* a standable node
+NOTE: CSZ=chunk_size, either 8 or 16 (still testing, likely stay with 8)
 
-The simplest approach would be to use a table for each of the above and use
-the position hash as the key. The value doesn't matter.
+What we need:
+ - a set of all (local) positions in the chunk that are part of the zone
+   - the positiions will mainly be tested, so a test should be O(1).
+   - should be able to hold all positions without penalty (water block)
+ - a set of all exit positions, or links to another zone
+   - the exit positions can be in 7 groups:
+     - internal (between zones inside the chunk)
+     - to each of the 6 adjacent chunks
+   - the exit positions will only be iterated (no lookup)
+   - worse case could have CSZ*CSZ exit nodes on each side with maybe
+     an extra layer on bottom (can fall 2) (CSZ*CSZ*7 total)
+     - exit nodes on the side are expected to be common. top/bottom/inside less so.
+     - with CSZ=8, that is 64 exit nodes per side or up to 448 total (896 bytes)
+     - with CSZ=8, we need 3x3 (9) bits to store the local position
+     - with CSZ=16, that is 256 exit nodes per side or up to 1792 total (3584 bytes)
+     - with CSZ=16, we need 3x4 (12) bits to store the local position
+     - We could do tricks to reduce the memory usage (compress, special encoding)
+       but that doesn't seem worth the effort right now.
+       - a bit-packed array would save 43% (CSZ=8) or 25% (CSZ=16)
+       - encoding (bitmap, CSZ=8) would require 8 bytes on each of the 7 outside
+         slots (4 horizontal, 1 up, 2 down) for 56 bytes each
+       - internal would need 64 bytes, so an array would be better
+     - for now, we store the lpos using a u16 (2 bytes)
+ - all positions (either group) are clear and *above* a standable node
+
+The simplest approach (in Lua) would be to use a table for each of the above and
+use the position hash as the key. The value doesn't matter.
 
 There are 4096 (16x16x16) nodes in a chunk. Assuming a height of 2, it would
 require 3 nodes to have a stand position. That would give a realistic worst-case
 count of ~1365 (16/3*16*16) positions. The absolute worst case would be a chunk
-of 4906 climbable nodes, all of which can be in the zone.
+of 4906 climbable or swimable nodes, all of which can be in the zone.
 The worst possible number of zones is also ~1365, if the pattern were constructed
-such that no position could reach another position in the chunk
+such that no position could reach another position in the chunk. However, at some
+point, the chunk should be declared impassible.
 
 Lua uses about 40 bytes per table and about 40 bytes per entry.
-A typical chunk will have 1 zone with about 256 positions.
+A typical chunk will have 1 zone with about 256 positions (16x16, ground level).
 That is over 10 KB just for the zone members.
 
 A better approach is to use 1 bit per node.
@@ -31,25 +49,24 @@ However, given that we can't be in a solid node and we require (typically) 2
 clear nodes above the standing position, we can cut the vertical resolution by 2.
 That leaves a 2048 (16x8x16) bit array of 256 bytes per zone.
 
-However, directly constructing a 256 byte string, one bit at a time would trash
+Directly constructing a 256 byte string, one bit at a time would trash
 the garbage collector, so we build it as an array and table.concat() when done.
+
+If a similar approach is taken with exit nodes, we could get away with a 16 byte
+bitmap (16*8/8) on each side and a 32-byte bitmap (16x16/8) on top/bottom.
+For exit nodes, a 2x2x2 cell should suffice.
+
 
 Corner cases (assume 16x16x16, from 0,0,0 to 15,15,15):
  - We can stand on the bottom of the chunk, with the node that we are standing on
    in the chunk below. That makes the zone depend on the chunk below.
- - We can stand on the top
+ - The exit node from the bottom layer may drop down to y-2 due to the fear height
+ - We can stand on the top, with 1 empty space in the chunk above.
+ - Exit nodes, of course, depend on the the neighbor chunks
 
-16 _ this is part of chunk y+1
-15 : s <- can stand here, this row and above are clear
-14 : XXX
-...
- 2
- 1
- 0 _ s <- can stand here, depends on the chunk below
--1 : XXXXX
+This "class" hides the implementation of the data storage.
 
-This "class" hides the implementation.
-
+** Building a Wayzone
 wz = wayzone.new(chunk_pos)
 Create a new wayzone.
 
@@ -59,23 +76,57 @@ If pos is outside the chunk, this does nothing.
 
 wz:insert_exit(pos)
 Add a position as an exit node.
-The position may be inside the chunk (internal) or a x+/-1, z+/-1, y+/-1.
+The position may be inside the chunk (internal) or a x+/-1, z+/-1, y+/-1/-2.
 
 wz:finish()
-Indicate that we are done adding positions.
+Indicate that we are done adding visited/exit positions.
 This compacts the data storage.
-Cannot call insert() after calling finish().
+You cannot call insert() or insert_exit() after calling finish().
 
+** Testing Wayzone Content
 wz:inside(pos)
-Test if a position is inside the zone.
+wz:inside_local(lpos)
+Test if a position (global or local) is inside the zone.
 
 wz:exited_to(wz_other)
 Test if the current zone has an exit that maps to the other zone.
+This iterates over the appropriate exit nodes and calls wz_other:insied(pos)
+
+** Iteration
+wz:iter_exited(adjacent_cpos)
+wz:iter_visited()
+Create an iterator over the set.
+
+** Links
+wz:link_add_to(to_wz, gCost)
+wz:link_add_from(from_wz, gCost)
+Add a one-way link to or from another wayzone.
+gCost is the cost of that link. The default is the pathfinder estimate between
+the two center positions, with a multiplier if either is a water wayzone.
+NOTE: You can add a link to ANY other wayzone, not just adjacent ones.
+
+wz:link_test_to(to_wz)
+wz:link_test_from(from_wz)
+Test if there is a link to (or from) the other wayzone.
+
+wz:link_del(other_chash)
+Remove all links to wayzones in the other chunk.
+This is used when the chunk is reprocessed.
+
+** Misc
+wz:get_center_pos()
+Return the position of the center-most visited node.
+
+wz:get_dest(from_cpos)
+Creates and "end_pos" area for find_path(). This uses the center pos as the
+coordinates and the wayzone as the area.
+If from_cpos is set, then a min/max box around the two chunks is used to limit
+the path exploration area.
+NOTE: if the chunks are not adjacent, this can include a rather large area.
+REVISIT: use a list of chunk positions to allow for multihop paths.
 
 
 Todo:
- - put a box around the path when going from one wayzone to the next.
-   the box includes the involved chunks.
  - rescan a chunk when a path fails
    - cant find wayzone for a location
  - have the 'visited' nodes include all air above the ground? (no?)
@@ -92,12 +143,23 @@ Problems:
  - consider using 8x8x8 area (512 bits, 64 bytes)
    - more exit nodes? more dependant on neighboring chunks?
    - use a 2nd layer? (64x64x64) ?
+
+ToDo:
+ - handle path failure
+   - may need to reprocess some chunks and links
+ - Add link chains
 ]]
 local S = default.get_translator
 
 local wayzone = {}
 
--- convert a mask back to the bit -- there has to be a better way
+local chunk_size = 8
+local chunk_bytes = (chunk_size * chunk_size * chunk_size / 8)
+
+-- this should be read-only
+wayzone.chunk_size = chunk_size
+
+-- convert a mask back to the bit -- we don't have ilog2()
 local mask_to_bit = {
 	[0x01] = 0,
 	[0x02] = 1,
@@ -112,14 +174,20 @@ local mask_to_bit = {
 -- change a local position to a hash (12 bits, 0-15) (for the exit nodes)
 -- y is in the lsb so that we can reduce y precision with a rshift.
 local function lpos_to_hash(lpos)
-	return bit.lshift(lpos.x, 8) + bit.lshift(lpos.z, 4) + lpos.y
+	-- return bit.lshift(lpos.x, 8) + bit.lshift(lpos.z, 4) + lpos.y -- for 16 chunk size
+	return bit.lshift(lpos.x, 6) + bit.lshift(lpos.z, 3) + lpos.y -- for 8 chunk size
 end
 
 -- change a hash to a local position (for the exit nodes)
 local function hash_to_lpos(hash)
-	return { x=bit.band(bit.rshift(hash, 8), 15),
-	         y=bit.band(hash, 15),
-	         z=bit.band(bit.rshift(hash, 4), 15) }
+	-- for 16 chunk size
+	--return vector.new(bit.band(bit.rshift(hash, 8), 0x0f),
+	--                  bit.band(hash, 0x0f),
+	--                  bit.band(bit.rshift(hash, 4), 0x0f))
+	-- for 8 chunk size
+	return vector.new(bit.band(bit.rshift(hash, 6), 0x07),
+	                  bit.band(hash, 0x07),
+	                  bit.band(bit.rshift(hash, 3), 0x07))
 end
 
 --[[
@@ -145,7 +213,7 @@ end
 --[[
 Convert a local position to a byte index and mask.
 Reverses bytemask_to_lpos()
-@lpos is the local position, adjused to 0-15.
+@lpos is the local position, adjused to 0-chunk_size.
 @return byte_index, byte_mask
 
 NOTE: byte_index is 1-based
@@ -165,22 +233,22 @@ local function bytemask_to_lpos(bidx, mask)
 end
 
 local function in_range(val)
-	return val >= 0 and val <= 15
+	return val >= 0 and val < chunk_size
 end
 
 -- Seven "adjacent" chunks (includes self)
 wayzone.chunk_adjacent = {
-	[1] = { x=-16, y=  0, z=  0 },
-	[2] = { x= 16, y=  0, z=  0 },
-	[3] = { x=  0, y=-16, z=  0 },
-	[4] = { x=  0, y= 16, z=  0 },
-	[5] = { x=  0, y=  0, z=-16 },
-	[6] = { x=  0, y=  0, z= 16 },
-	[7] = { x=  0, y=  0, z=  0 },
+	[1] = vector.new(-chunk_size,   0,   0),
+	[2] = vector.new( chunk_size,   0,   0),
+	[3] = vector.new(  0, -chunk_size,   0),
+	[4] = vector.new(  0,  chunk_size,   0),
+	[5] = vector.new(  0,   0, -chunk_size),
+	[6] = vector.new(  0,   0,  chunk_size),
+	[7] = vector.new(  0,   0,   0), -- self/same chunk
 }
 
--- find the index for the "outside" exit set
--- 1=-1, 2=+x, 3=-y, 4=+y, 5=-z, 6=+z, 7=inside
+-- find the index (into chunk_adjacent) for the "outside" exit set
+-- returns the index into chunk_adjacent, lpos in the adjacent chunk
 local function exit_index(self, lpos)
 	--minetest.log("action", string.format("wayzone: exit %s %s",
 	--	minetest.pos_to_string(lpos),
@@ -192,29 +260,30 @@ local function exit_index(self, lpos)
 				-- x,y,z in range
 				return 7, lpos -- inside
 			elseif lpos.z < 0 then
-				return 5, {x=lpos.x, y=lpos.y, z=lpos.z+16} -- at -z
+				return 5, vector.new(lpos.x, lpos.y, lpos.z+chunk_size) -- at -z
 			else
-				return 6, {x=lpos.x, y=lpos.y, z=lpos.z-16} -- at +z
+				return 6, vector.new(lpos.x, lpos.y, lpos.z-chunk_size) -- at +z
 			end
 		elseif in_range(lpos.z) then
 			-- x,z in range
 			if lpos.y < 0 then
-				return 3, {x=lpos.x, y=lpos.y+16, z=lpos.z}  -- at -y
+				return 3, vector.new(lpos.x, lpos.y+chunk_size, lpos.z) -- at -y
 			else
-				return 4, {x=lpos.x, y=lpos.y-16, z=lpos.z} -- at +y
+				return 4, vector.new(lpos.x, lpos.y-chunk_size, lpos.z) -- at +y
 			end
 		end
 	elseif in_range(lpos.y) and in_range(lpos.z) then
 		-- y,z in range, x not
 		if lpos.x < 0 then
-			return 1, {x=lpos.x+16, y=lpos.y, z=lpos.z} -- at -x
+			return 1, vector.new(lpos.x+chunk_size, lpos.y, lpos.z) -- at -x
 		else
-			return 2, {x=lpos.x-16, y=lpos.y, z=lpos.z} -- at +x
+			return 2, vector.new(lpos.x-chunk_size, lpos.y, lpos.z) -- at +x
 		end
 	end
 	return nil -- corner?
 end
 
+-- convert a global position to a local position but subtracting off self.cpos
 function wayzone:pos_to_local(pos)
 	return vector.subtract(vector.floor(pos), self.cpos)
 end
@@ -240,7 +309,7 @@ function wayzone:insert(pos)
 
 	-- the position has to be inside the chunk
 	local lpos = self:pos_to_local(pos)
-	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x > 15 or lpos.y > 15 or lpos.z > 15 then
+	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x >= chunk_size or lpos.y >= chunk_size or lpos.z >= chunk_size then
 		minetest.log("warning", "wayzone: Called insert on ".. minetest.pos_to_string(lpos))
 		return false
 	end
@@ -250,18 +319,48 @@ function wayzone:insert(pos)
 	return true
 end
 
+-- Calculate the center pos. this is called once via finish()
+local function wayzone_calc_center(self)
+	-- add up the coordinates to find the center
+	local count = 0
+	local sx = 0
+	local sy = 0
+	local sz = 0
+	for pos in self:iter_visited() do
+		count = count + 1
+		sx = sx + pos.x
+		sy = sy + pos.y
+		sz = sz + pos.z
+	end
+	local vave = vector.new(sx/count, sy/count, sz/count)
+	local best = nil
+	local best_dist = 0
+	for pos in self:iter_visited() do
+		local dist = vector.distance(pos, vave)
+		if best == nil or dist < best_dist then
+			best = pos
+			best_dist = dist
+		end
+	end
+	self.center_pos = best
+	self.visited_count = count
+end
+
 -- Flatten the byte array into a string
--- The array takes at least 10 KB. The string uses < 550.
-function wayzone:finish()
+-- The array uses 40 B (1) to 54 KB (1365), with a typical value of ~10 KB (256).
+-- The string uses ~chunk_bytes bytes always.
+function wayzone:finish(in_water)
 	-- pack the visited table into a fixed-length string.
 	assert(type(self.visited) == "table")
 	local tmp = {}
-	for idx=1,512 do
+	for idx=1,chunk_bytes do
 		table.insert(tmp, string.char(self.visited[idx] or 0))
 	end
 	self.visited = table.concat(tmp, '')
+	self.in_water = in_water or false
 
 	-- pack the exited info into a variable-length string
+	-- REVISIT: use a bitmap for X,Z,+Y sides (8 bytes or u64)
 	local packed_exited = {}
 	for k, v in pairs(self.exited) do
 		assert(type(v) == "table")
@@ -273,11 +372,35 @@ function wayzone:finish()
 		packed_exited[k] = table.concat(xxx, '')
 	end
 	self.exited = packed_exited
+
+	-- find the min/max box
+	local minp
+	local maxp
+	for pos in self:iter_visited() do
+		if minp == nil then
+			minp = vector.new(pos)
+			maxp = vector.new(pos)
+		else
+			for _, fld in ipairs({'x', 'y', 'z'}) do
+				if minp[fld] > pos[fld] then
+					minp[fld] = pos[fld]
+				end
+				if maxp[fld] < pos[fld] then
+					maxp[fld] = pos[fld]
+				end
+			end
+		end
+	end
+	self.minp = minp
+	self.maxp = maxp
+
+	-- update the center position
+	wayzone_calc_center(self)
 end
 
 --[[
 Check if a local position is in the visited positions inside the chunk.
-x,y,z should all be in range 0-15.
+x,y,z should all be in range 0-chunk_size.
 ]]
 function wayzone:inside_local(lpos)
 	-- TODO: remove assert when it all works
@@ -304,7 +427,7 @@ function wayzone:inside(pos)
 	-- convert to local coordinates
 	local lpos = self:pos_to_local(pos)
 	-- do the box check
-	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x > 15 or lpos.y > 15 or lpos.z > 15 then
+	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x >= chunk_size or lpos.y >= chunk_size or lpos.z >= chunk_size then
 		return false
 	end
 	-- check the visited array/string
@@ -393,7 +516,7 @@ function wayzone:iter_visited()
 	local bit_mask = 1
 	return function ()
 		while true do
-			if byte_idx > 512 then
+			if byte_idx > chunk_bytes then
 				return nil
 			end
 			if bit_mask < 256 then
@@ -416,64 +539,72 @@ function wayzone:iter_visited()
 	end
 end
 
---[[
-Find a position at the center of the visited zone.
-]]
+-- Return a new vector containing the center of the wayzone.
 function wayzone:get_center_pos()
-	if self.center_pos == nil then
-		-- add up the coordinates to find the center
-		local count = 0
-		local sx = 0
-		local sy = 0
-		local sz = 0
-		for pos in self:iter_visited() do
-			count = count + 1
-			sx = sx + pos.x
-			sy = sy + pos.y
-			sz = sz + pos.z
-		end
-		local vave = { x=sx/count, y=sy/count, z=sz/count }
-		local best = nil
-		local best_dist = 0
-		for pos in self:iter_visited() do
-			local dist = vector.distance(pos, vave)
-			if best == nil or dist < best_dist then
-				best = pos
-				best_dist = dist
-			end
-		end
-		self.center_pos = best
-	end
+	assert(self.center_pos ~= nil)
 	return vector.new(self.center_pos)
+end
+
+-- find the closest location in minp, maxp to pos
+local function closest_to_box(pos, minp, maxp)
+	local function bound_val(val, vmin, vmax)
+		if val < vmin then return vmin end
+		if val > vmax then return vmax end
+		return val
+	end
+	return vector.new(
+		bound_val(pos.x, minp.x, maxp.x),
+		bound_val(pos.y, minp.y, maxp.y),
+		bound_val(pos.z, minp.z, maxp.z))
 end
 
 --[[
 Create the "end_pos" for this wayzone.
-@cur_pos is optional. If present, create an "outside" function that discards
-  walkers that stray outside the box created by the two wayzones.
+@allowed_chash is optional.
+  It can be a chunk hash (number) or an array of chunk hashes.
+  If present, this will create an "outside" function that discards
+  walkers that stray outside any of the chunks.
+@target_pos is optional.
+  It must be a table with x,y,z. If missing the center position
 ]]
-function wayzone:get_dest(from_cpos)
-	local end_pos = self:get_center_pos()
-	end_pos.inside = function(fself, pos, hash)
-		return self:inside(pos)
+function wayzone:get_dest(cur_pos)
+	local target_area
+	if cur_pos ~= nil then
+		target_area = closest_to_box(cur_pos, self.minp, self.maxp)
+	else
+		target_area = self:get_center_pos()
 	end
-	if from_cpos ~= nil then
-		local minp = {
-			x=math.min(from_cpos.x, self.cpos.x),
-			y=math.min(from_cpos.y, self.cpos.y),
-			z=math.min(from_cpos.z, self.cpos.z)
-		}
-		local maxp = {
-			x=math.max(from_cpos.x+15, self.cpos.x+15),
-			y=math.max(from_cpos.y+15, self.cpos.y+15),
-			z=math.max(from_cpos.z+15, self.cpos.z+15)
-		}
-		end_pos.outside = function(fself, pos, hash)
-			return (pos.x < minp.x or pos.y < minp.y or pos.z < minp.z or
-			        pos.x > maxp.x or pos.y > maxp.y or pos.z > maxp.z)
+
+	target_area.inside = function(fself, pos, hash)
+		return self:inside(pos) -- calling wayzone:inside(), not target_area:inside()
+	end
+	return target_area
+end
+
+-- Adds an 'outside' function that allows only the chunks associated with the
+-- hashes listed in allowed_chash.
+-- target_area must be a table.
+function wayzone.outside_chash(target_area, allowed_chash)
+	assert(type(target_area) == "table")
+
+	if target_area.chash_ok == nil then
+		target_area.chash_ok = {} -- table of allowed chunks (by hash)
+	end
+	if allowed_chash ~= nil then
+		if type(allowed_chash) == "table" then
+			for _, hh in ipairs(allowed_chash) do
+				target_area.chash_ok[hh] = true
+			end
+		elseif type(allowed_chash) == "number" then
+			target_area.chash_ok[allowed_chash] = true
 		end
 	end
-	return end_pos
+	if target_area.outside == nil then
+		target_area.outside = function(self, pos, hash)
+			local chash = minetest.hash_node_position(wayzone.normalize_pos(pos))
+			return self.chash_ok[chash] ~= true
+		end
+	end
 end
 
 -- record that we have a link to self to @to_wz
@@ -531,11 +662,17 @@ Get the chunk position for an arbitrary position (clear lowest 4 bits of x,y,z)
 This creates a new table.
 ]]
 function wayzone.normalize_pos(pos)
-	return { x=math.floor(pos.x/16)*16, y=math.floor(pos.y/16)*16, z=math.floor(pos.z/16)*16 }
+	return vector.new(math.floor(pos.x/chunk_size)*chunk_size,
+	                  math.floor(pos.y/chunk_size)*chunk_size,
+	                  math.floor(pos.z/chunk_size)*chunk_size)
 end
 
 -- Encode the chash/index pair into a globally unique table key
+-- I'd like to use a uint64, but that doesn't work in Lua. (precision issue)
+-- So, we do hex right now, as that is really useful for debug logs.
+-- We could use pack/unpack if not using it in logs.
 function wayzone.key_encode(chash, index)
+	-- return string.pack('=I6B', chash, index)
 	return string.format("%012x:%d", chash, index)
 end
 
@@ -546,6 +683,7 @@ end
 
 -- Decode the chash/index pair from the key
 function wayzone.key_decode(key)
+	-- return string.unpack('=I6B', key)
 	return tonumber(string.sub(key, 1, 12), 16), tonumber(string.sub(key, 14), 10)
 end
 
@@ -558,13 +696,17 @@ end
 -- create a new, empty wayzone
 function wayzone.new(cpos, index)
 	local wz = {}
-	wz.index = index
-	wz.cpos = wayzone.normalize_pos(cpos)
-	wz.chash = minetest.hash_node_position(wz.cpos)
+	wz.index = index                                -- index in owning chunk
+	wz.cpos = wayzone.normalize_pos(cpos)           -- global coords of owning chunk
+	wz.chash = minetest.hash_node_position(wz.cpos) -- hash (ID) of owning chunk
+	-- wz.center_pos = visited node position closest to the center (global coords)
+	-- wz.minp = minimum of all visited node positions (global coords)
+	-- wz.maxp = maximum of all visited node positions (global coords)
 	-- globally unique key for this wayzone
-	wz.key = wayzone.key_encode(wz.chash, wz.index)
-	wz.visited = {} -- sparse array of 512 bytes
-	wz.exited = {} -- inside=7,1..6=outside
+	wz.key = wayzone.key_encode(wz.chash, wz.index) -- unique key for this wayzone
+	wz.visited = {} -- visited locations (table of hashes or bitmap string)
+	wz.exited = {} -- inside=7,1..6=outside, val=table of hashes or array/string
+	-- wz.visited_count = number of visited entries after finish
 	-- the neighbor entries are only the chash, index, and key fields from the wayzone
 	wz.link_to = {}   -- links to other wayzones, key=other_wz.key
 	wz.link_from = {} -- links from other wayzones, key=other_wz.key

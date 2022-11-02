@@ -43,7 +43,7 @@ local sorted_hash = working_villages.require("sorted_hash")
 local pathfinder = {}
 
 -- set to do super verbose around this node (REMOVE)
-local debug_position = { x=196, y=0, z=8 }
+local debug_position = vector.new(196, 0, 8)
 
 -- show particles along the path
 pathfinder.debug = true
@@ -58,13 +58,17 @@ As end_pos may be an area, this can overestimate the cost. However, that
 shouldn't matter, as the path ends as soon as the walker hits the end area.
 --]]
 local function get_estimated_cost(start_pos, end_pos)
-	local distX = math.abs(start_pos.x - end_pos.x)
-	local distZ = math.abs(start_pos.z - end_pos.z)
-
-	if distX > distZ then
-		return 14 * distZ + 10 * (distX - distZ)
+	if false then
+		return 1
 	else
-		return 14 * distX + 10 * (distZ - distX)
+		local distX = math.abs(start_pos.x - end_pos.x)
+		local distZ = math.abs(start_pos.z - end_pos.z)
+
+		if distX > distZ then
+			return 14 * distZ + 10 * (distX - distZ)
+		else
+			return 14 * distX + 10 * (distZ - distX)
+		end
 	end
 end
 pathfinder.get_estimated_cost = get_estimated_cost
@@ -159,6 +163,7 @@ local function is_node_water(node)
 	node = resolve_node(node)
 	return minetest.get_item_group(node.name, "water") > 0
 end
+pathfinder.is_node_water = is_node_water
 
 --[[
 Check to see how many clear nodes are at and above @pos.
@@ -177,7 +182,7 @@ local function check_clear_height(pos, max_height, start_height)
 	start_height = start_height or 0
 	local wcount = 0
 	for dy = start_height, max_height-1 do
-		local pp = { x=pos.x, y=pos.y+dy, z=pos.z }
+		local pp = vector.new(pos.x, pos.y+dy, pos.z)
 		local node = minetest.get_node(pp)
 		if is_node_collidable(node) then
 			return dy, wcount
@@ -230,7 +235,7 @@ local function check_clearance(cpos, height, jump_height, start_height)
 	--		height, jump_height, stand_cnt))
 	-- the 1 is for climbing
 	for i=stand_cnt, height + math.max(jump_height, 1) do
-		local hpos = {x=cpos.x, y=cpos.y+i, z=cpos.z}
+		local hpos = vector.new(cpos.x, cpos.y+i, cpos.z)
 		if is_node_collidable(minetest.get_node(hpos)) then
 			--minetest.log("warning", string.format("check_clearance: %s %s, collide @ %s i=%d h=%d j=%d",
 			--		minetest.pos_to_string(cpos), minetest.pos_to_string(gpos),
@@ -283,12 +288,13 @@ It needs to determine the following:
 @jump_height is the number of nodes that the MOB can jump
 ]]
 local function scan_neighbor_start(nc, height, jump_height)
-	local ret = { stand=true, jump=true, climb_up=false, climb_down=false, swim_up=false, swim_down=false }
+	local ret = { stand=true, jump=true, climb_up=false, climb_down=false, swim_up=false, swim_down=false, in_water=false }
 	local max_y = height + math.max(jump_height, 1)
 	local water_cnt = 0
 
 	local ii = nc:get_dy(0)
 	ret.climb_up = ii.climb  -- may get cleared on the clearance check
+	ret.in_water = ii.water
 
 	if ii.water then
 		water_cnt = 1
@@ -362,12 +368,14 @@ end
 function nodecache:get_dy(dy)
 	local ii = self.dyc[dy]
 	if ii == nil then
-		ii = self:get_at_pos({x=self.pos.x, y=self.pos.y+dy, z=self.pos.z})
+		local npos = vector.new(self.pos.x, self.pos.y+dy, self.pos.z)
+		ii = self:get_at_pos(npos)
 		self.dyc[dy] = ii
 		self.dy_miss = (self.dy_miss or 0) + 1
-		--minetest.log("action", string.format("get_dy(%d) %s water=%s clear=%s stand=%s climb=%s",
+		--local node = minetest.get_node(npos)
+		--minetest.log("action", string.format("get_dy(%d) %s water=%s clear=%s stand=%s climb=%s node=%s",
 		--	dy, minetest.pos_to_string(ii.pos),
-		--	tostring(ii.water), tostring(ii.clear), tostring(ii.stand), tostring(ii.climb)))
+		--	tostring(ii.water), tostring(ii.clear), tostring(ii.stand), tostring(ii.climb), node.name))
 	else
 		self.dy_hit = (self.dy_hit or 0) + 1
 	end
@@ -443,10 +451,10 @@ To jump into the neighbor node, we test:
 @height the number of nodes that must be clear to be in this position (2)
 @jump_height the height of a jump (1)
 @fear_height how far we can drop down (2)
-return { can_walk=bool, can_jump=bool, gpos=nil|position }
+return { npos=nc.pos, can_walk=bool, can_jump=bool, in_water=bool, gpos=nil|position }
 ]]
 local function scan_neighbor(nc, height, jump_height, fear_height)
-	local ret = { can_walk=true, can_jump=true }
+	local ret = { npos=nc.pos, can_walk=true, can_jump=true, in_water=false }
 
 	-- check for the ability to walk into the node
 	for dy=0,height-1 do
@@ -487,7 +495,7 @@ local function scan_neighbor(nc, height, jump_height, fear_height)
 				end
 			end
 			if gy ~= nil then
-				gpos = {x=nc.pos.x, y=nc.pos.y+gy, z=nc.pos.z}
+				gpos = vector.new(nc.pos.x, nc.pos.y+gy, nc.pos.z)
 			end
 		end
 	else
@@ -499,13 +507,13 @@ local function scan_neighbor(nc, height, jump_height, fear_height)
 		for dy=-1,-(fear_height+1),-1 do
 			local ii = nc:get_dy(dy)
 			if ii.stand then
-				gpos = {x=nc.pos.x, y=nc.pos.y+dy+1, z=nc.pos.z}
+				gpos = vector.new(nc.pos.x, nc.pos.y+dy+1, nc.pos.z)
 				break
 			elseif ii.water then
 				-- We can "stand" at the bottom of @height water nodes
 				water_cnt = water_cnt +1
 				if water_cnt >= height then
-					gpos = {x=nc.pos.x, y=nc.pos.y+dy, z=nc.pos.z}
+					gpos = vector.new(nc.pos.x, nc.pos.y+dy, nc.pos.z)
 					break
 				end
 			end
@@ -521,10 +529,14 @@ local function scan_neighbor(nc, height, jump_height, fear_height)
 			-- scan upward to see if we have height free nodes
 			local gdy = gpos.y - nc.pos.y
 			for dy=0,height-1 do
-				if not nc:get_dy(gdy+dy).clear then
+				local ii = nc:get_dy(gdy+dy)
+				if not ii.clear then
 					gpos = nil
 					--minetest.log("action", "no headroom")
 					break
+				end
+				if ii.water then
+					ret.in_water = true
 				end
 			end
 		end
@@ -544,7 +556,7 @@ Climbable nodes count as ground when below.
 return nil (nothing within range) or the position of the ground.
 --]]
 local function get_neighbor_ground_level(pos, jump_height, fall_height)
-	local tmp_pos = { x=pos.x, y=pos.y, z=pos.z }
+	local tmp_pos = vector.new(pos.x, pos.y, pos.z)
 	local node = minetest.get_node(tmp_pos)
 	local height = 0
 	if is_node_collidable(node) then
@@ -592,7 +604,7 @@ Climbable nodes count as ground when below.
 return nil (nothing within range) or the position of the ground.
 --]]
 local function get_neighbor_stand_level(pos, height, jump_height, fall_height)
-	local tmp_pos = { x=pos.x, y=pos.y, z=pos.z }
+	local tmp_pos = vector.new(pos.x, pos.y, pos.z)
 	local node = minetest.get_node(tmp_pos)
 	local height = 0
 	if is_node_collidable(node) then
@@ -629,14 +641,14 @@ It is used to scan the neighboring nodes on the X-Z plane.
 1=up(-z), incr clockwise by 45 deg, even indexes are diagonals.
 --]]
 local dir_vectors = {
-	[1] = { x=0, y=0, z=-1 }, -- up
-	[2] = { x=1, y=0, z=-1 }, -- up/right
-	[3] = { x=1, y=0, z=0 },  -- right
-	[4] = { x=1, y=0, z=1 },  -- down/right
-	[5] = { x=0, y=0, z=1 },  -- down
-	[6] = { x=-1, y=0, z=1 }, -- down/left
-	[7] = { x=-1, y=0, z=0 }, -- left
-	[8] = { x=-1, y=0, z=-1 },-- up/left
+	[1] = vector.new( 0, 0, -1), -- up
+	[2] = vector.new( 1, 0, -1), -- up/right
+	[3] = vector.new( 1, 0,  0), -- right
+	[4] = vector.new( 1, 0,  1), -- down/right
+	[5] = vector.new( 0, 0,  1), -- down
+	[6] = vector.new(-1, 0,  1), -- down/left
+	[7] = vector.new(-1, 0,  0), -- left
+	[8] = vector.new(-1, 0, -1), -- up/left
 }
 -- adds to the dir index while wrapping around 1 and 8
 local function dir_add(dir, delta)
@@ -657,24 +669,19 @@ local function neighbor_args(current_pos, args)
 
 	if new_args.nc == nil then
 		new_args.nc = nodecache.new(current_pos)
+	else
+		new_args.nc:set_pos(current_pos)
 	end
 	new_args.start = scan_neighbor_start(new_args.nc, args.height, args.jump_height)
-	local xx = {}
-	for k, v in pairs(new_args.start) do
-		table.insert(xx, string.format(" %s=%s", k, tostring(v)))
+
+	if args.debug then
+		local xx = {}
+		for k, v in pairs(new_args.start) do
+			table.insert(xx, string.format(" %s=%s", k, tostring(v)))
+		end
+		minetest.log("warning",
+			string.format("start: %s %s", minetest.pos_to_string(current_pos), table.concat(xx, "")))
 	end
-	minetest.log("warning",
-		string.format("start: %s %s", minetest.pos_to_string(current_pos), table.concat(xx, "")))
-
-	-- Check to see if we can jump in the current pos. We can't jump to another
-	-- node if we can't jump here.
-	-- new_args.clear = check_clearance(current_pos, current_pos, args.height, args.jump_height)
-
-	-- Set the jump height to 0 if we can't jump. May save a few cycles, but
-	-- all the neighbors will have clear_walk==clear_jump
-	--if not new_args.clear.jump then
-	--	new_args.jump_height = 0
-	--end
 	return new_args
 end
 
@@ -687,27 +694,35 @@ local function neighbors_collect_no_diag(neighbors, args)
 			local neighbor_pos = vector.add(args.pos, ndir)
 
 			nc:set_pos(neighbor_pos)
+			-- NOTE: ==> { npos=nc.pos, can_walk=bool, can_jump=bool, in_water=bool, gpos=nil|position }
 			local info = scan_neighbor(nc, args.height, args.jump_height, args.fear_height)
 
 			if info.gpos ~= nil then
-				if args.debug then
-					minetest.log("action",
-						string.format(" neighbor %s %s can_walk=%s can_jump=%s",
-							minetest.pos_to_string(neighbor_pos), minetest.pos_to_string(info.gpos),
-							tostring(info.can_walk), tostring(info.can_jump)))
-				end
 				if (info.gpos.y <= args.pos.y and info.can_walk) or (args.start.jump and info.can_jump) then
+					local cost = 10
+					if info.gpos.y ~= args.pos.y then
+						cost = cost + 10
+					end
+					if args.start.in_water or info.in_water then
+						cost = cost * 5
+					end
+					if args.debug then
+						minetest.log("action",
+							string.format(" neighbor %s %s cost=%d can_walk=%s can_jump=%s in_water=%s",
+								minetest.pos_to_string(info.npos), minetest.pos_to_string(info.gpos),
+								cost, tostring(info.can_walk), tostring(info.can_jump), tostring(info.in_water)))
+					end
 					table.insert(neighbors, {
 						pos = info.gpos,
 						hash = minetest.hash_node_position(info.gpos),
-						cost = 10
+						cost = cost
 					})
 				end
 			else
 				if args.debug then
 					minetest.log("action",
 						string.format(" neighbor %s NONE can_walk=%s can_jump=%s",
-							minetest.pos_to_string(neighbor_pos),
+							minetest.pos_to_string(info.npos),
 							tostring(info.can_walk), tostring(info.can_jump)))
 				end
 			end
@@ -715,75 +730,80 @@ local function neighbors_collect_no_diag(neighbors, args)
 	end
 end
 
--- collect neighbors with diagonals
+--[[
+Collect neighbors with diagonals.
+This is a two-step process. First we gather all the column info and then
+we check if we can go in that direction.
+The neighbor structure is { pos=pos, hash=hash, cost=num }
+]]
 local function neighbors_collect_diag(neighbors, args)
+	local nc = args.nc
+
 	-- collect the neighbor ground position and jump/walk clearance (X-Z plane)
 	-- using the neighbor index so we can ref surrounding directions
 	local n_info = {}
 	for nidx, ndir in ipairs(dir_vectors) do
-		local neighbor_pos = vector.add(args.pos, ndir)
-		local neighbor_ground = get_neighbor_ground_level(neighbor_pos, args.jump_height, args.fear_height)
-		if neighbor_ground ~= nil and is_node_stand_forbidden(vector.add(neighbor_ground, vector.new(0, -1, 0))) then
-			--minetest.log("warning", string.format(" ground @ %s not allowed", minetest.pos_to_string(neighbor_ground)))
-			neighbor_ground = nil
-		end
-		local neighbor = {}
-
-		neighbor.clear = check_clearance(neighbor_pos, neighbor_ground or neighbor_pos, args.height, args.jump_height)
-		if neighbor_ground ~= nil then
-			neighbor.pos = neighbor_ground
-			neighbor.hash = minetest.hash_node_position(neighbor_ground)
-		end
-		n_info[nidx] = neighbor
+		nc:set_pos(vector.add(args.pos, ndir))
+		n_info[nidx] = scan_neighbor(nc, args.height, args.jump_height, args.fear_height)
 	end
 
 	-- 2nd pass to evaluate 'clear' info to check diagonals
-	for nidx, neighbor in ipairs(n_info) do
-		if neighbor.pos ~= nil then
-			if neighbor.pos.y > args.pos.y then
-				if not (args.clear.jump and neighbor.clear.jump) then
+	for nidx, info in ipairs(n_info) do
+		-- NOTE: info: { npos=nc.pos, can_walk=bool, can_jump=bool, in_water=bool, gpos=nil|position }
+		if info.gpos ~= nil then
+			local cost = 0
+			local dy = args.pos.y - info.gpos.y
+			if dy < 0 then -- jumping up
+				if not (args.start.jump and info.can_jump) then
 					-- can't jump from current location to neighbor
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = n_info[dir_add(nidx, -1)]
 					local n_cw = n_info[dir_add(nidx, 1)]
-					if n_ccw.clear.jump and n_cw.clear.jump then
-						neighbor.cost = 14 -- + 15 -- 15 for jump, 14 for diag
+					if n_ccw.can_jump and n_cw.can_jump then
+						cost = 14 + 15 -- 15 for jump, 14 for diag
 					end
 				else
 					-- not diagonal, can go
-					neighbor.cost = 10 -- + 15 -- 15 for jump, 10 for move
+					cost = 10 + 15 -- 15 for jump, 10 for move
 				end
-			else -- neighbor.pos.y <= args.pos.y
-				if not neighbor.clear.walk then
+			else -- dy >= 0, flat or falling
+				if not info.can_walk then
 					-- can't walk into that neighbor
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = n_info[dir_add(nidx, -1)]
 					local n_cw = n_info[dir_add(nidx, 1)]
-					if n_ccw.clear.walk and n_cw.clear.walk then
+					if n_ccw.can_walk and n_cw.can_walk then
 						-- 14 for diag, 8 for each node drop
-						neighbor.cost = 14 -- + 8 * (current_pos.y - neighbor.pos.y)
+						cost = 14 -- + 8 * dy
 					end
 				else
 					-- 10 for diag, 8 for each node drop
-					neighbor.cost = 10 -- + 8 * (current_pos.y - neighbor.pos.y)
+					cost = 10 -- + 8 * dy
 				end
 			end
-			if false and neighbor.cost ~= nil then
+			if false and cost ~= nil then
 				-- double the cost if neighboring cells are not clear
-				-- FIXME: this is a misguided attempt to get the MOB to stay away
-				--        from corners. Also could try a cost hit for 90 turns.
-				--        That would require propagating the direction.
+				-- FIXME: this is an attempt to get the MOB to stay away
+				--        from corners and ledges.
 				for dd=-2,2,1 do
 					if dd ~= 0 then
-						if n_info[dir_add(nidx, dd)].clear.walk ~= true then
-							neighbor.cost = neighbor.cost * 2
+						if n_info[dir_add(nidx, dd)].can_walk ~= true then
+							cost = cost * 2
 							break
 						end
 					end
 				end
 			end
-			if neighbor.cost ~= nil then
-				table.insert(neighbors, neighbor)
+			if cost > 0 then
+				if args.start.in_water or info.in_water then
+					cost = cost * 5
+				end
+
+				table.insert(neighbors, {
+					pos = info.gpos,
+					hash = minetest.hash_node_position(info.gpos),
+					cost = cost
+				})
 			end
 		end
 	end
@@ -803,29 +823,37 @@ local function get_neighbors(current_pos, args)
 
 	if args.want_diag == true then
 		neighbors_collect_diag(neighbors, args)
+		neighbors_collect_no_diag(neighbors, args)
 	else
 		neighbors_collect_no_diag(neighbors, args)
 	end
 
-	if args.want_climb then
-		-- Check if we can climb and we are in a climbable node
-		if args.start.climb_up then
-			local npos = {x=args.pos.x, y=args.pos.y+1, z=args.pos.z}
-			table.insert(neighbors, {
-				pos = npos,
-				hash = minetest.hash_node_position(npos),
-				cost = 20})
+	-- Check if we can climb or swim up
+	if (args.want_climb and args.start.climb_up) or (args.want_swim and args.start.swim_up) then
+		local npos = vector.new(args.pos.x, args.pos.y+1, args.pos.z)
+		local cost = 20
+		if args.start.swim_up and not args.start.climb_up then
+			cost = cost * 5
 		end
-
-		-- Check if we can climb down
-		if args.start.climb_down then
-			local npos = {x=args.pos.x, y=args.pos.y-1, z=args.pos.z}
-			table.insert(neighbors, {
-				pos = npos,
-				hash = minetest.hash_node_position(npos),
-				cost = 15})
-		end
+		table.insert(neighbors, {
+			pos = npos,
+			hash = minetest.hash_node_position(npos),
+			cost = cost})
 	end
+
+	-- Check if we can climb or swim down
+	if (args.want_climb and args.start.climb_down) or (args.want_swim and args.start.swim_down) then
+		local npos = vector.new(args.pos.x, args.pos.y-1, args.pos.z)
+		local cost = 15
+		if args.start.swim_down and not args.start.climb_down then
+			cost = cost * 5
+		end
+		table.insert(neighbors, {
+			pos = npos,
+			hash = minetest.hash_node_position(npos),
+			cost = cost})
+	end
+
 	return neighbors
 end
 
@@ -888,31 +916,22 @@ function slist_new()
 	return sorted_hash.new(slist_key_encode, slist_item_compare)
 end
 
+--[[
+Roll up the path from end_hash back to start_index. Since we trace back from the
+end position, the path is reversed.
+]]
 local function do_collect_path(closedSet, end_hash, start_index)
 	--minetest.log("warning", string.format("collect_path: end=%x start=%x", end_hash, start_index))
 	-- trace backwards to the start node to create the reverse path
 	local reverse_path = {}
 	local cur_hash = end_hash
-	for k, v in pairs(closedSet) do
-		--minetest.log("warning", string.format(" - k=%x p=%s h=%x", k,
-		--	minetest.pos_to_string(v.pos), v.hash))
-	end
 	while start_index ~= cur_hash and cur_hash ~= nil do
-		local ref2 = closedSet[cur_hash]
-		if ref2 == nil then
-			-- FIXME: this is an "impossible" error condition
-			minetest.log("warning", string.format("hash error: missing %x", cur_hash))
-			for k, v in pairs(closedSet) do
-				minetest.log("warning", string.format(" - k=%x p=%s h=%x", k,
-					minetest.pos_to_string(v.pos), v.hash))
-			end
-			return nil
-		end
-		table.insert(reverse_path, ref2.pos)
-		cur_hash = ref2.parent
+		local ref = closedSet[cur_hash]
+		table.insert(reverse_path, ref.pos)
+		cur_hash = ref.parent
 	end
 
-	-- iterate backwards on reverse_path to build path
+	-- iterate backwards on reverse_path to build the forward path
 	local path = {}
 	for idx=#reverse_path,1,-1 do
 		table.insert(path, reverse_path[idx])
@@ -920,6 +939,7 @@ local function do_collect_path(closedSet, end_hash, start_index)
 	--if pathfinder.debug == true then
 	--	pathfinder.show_particles(path)
 	--end
+	-- return both forward and reverse paths, since we have both
 	return path, reverse_path
 end
 
@@ -928,16 +948,20 @@ local function nil2def(val, def)
 	return val
 end
 
+-- normalize the options/args used with the pathfinder, populating defaults
 local function get_find_path_args(options, entity)
 	options = options or {}
 	local args = {
 		want_diag = nil2def(options.want_diag, true), -- 'or' doesn't work with bool
 		want_climb = nil2def(options.want_climb, true),
+		want_swim = nil2def(options.want_swim, true),
 		want_nil = options.want_nil,
+		debug = nil2def(options.debug, false),
 		height = options.height or 2,
 		fear_height = options.fear_height or 2,
 		jump_height = options.jump_height or 1,
 	}
+	-- pull the height from the collisionbox, if available
 	if entity and entity.collisionbox then
 		local collisionbox = entity.collisionbox or entity.initial_properties.collisionbox
 		args.height = math.ceil(collisionbox[5] - collisionbox[2])
@@ -950,45 +974,53 @@ This is the pathfinder function.
 It will always return a pair of paths with at least one position.
 
 @start_pos is the starting position
-@end_pos is the ending position or area, must contain x,y,z
+@target_area is the target area. It must contain x,y,z, which describes a position
+  inside the target area, usually the center.
+  It may contain "inside" and "outside" functions.
 @entity a table that provides: collisionbox, fear_height, and jump_height
 @option { want_nil = return nil on failure }
 
-If @end_pos has a method "inside(self, pos, hash)", then that is called to test
-whether a position is in the end area. That allows the path to end early.
-If @end_pos has a method "outside(self, pos, hash)", then that is called to test
+If @target_area has a method "inside(self, pos, hash)", then that is called to test
+whether a position is in the target area. That allows the path to end early.
+
+If @target_area has a method "outside(self, pos, hash)", then that is called to test
 whether a walker should be dropped. If that returns true, the location is outside
 of the area that we can explore.
+
+returns an array of waypoint positions and a reversed array (why??)
 --]]
-function pathfinder.find_path(start_pos, end_pos, entity, options)
+function pathfinder.find_path(start_pos, target_area, entity, options)
 	local args = get_find_path_args(options, entity)
-	minetest.log("action", "find_path:"
-				 .. "start " .. minetest.pos_to_string(start_pos)
-				 .. " dest " .. minetest.pos_to_string(end_pos))
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
-	assert(end_pos ~= nil and end_pos.x ~= nil and end_pos.y ~= nil and end_pos.z ~= nil)
-	--print("searching for a path from:"..minetest.pos_to_string(pos).." to:"..minetest.pos_to_string(end_pos))
+	assert(target_area ~= nil and target_area.x ~= nil and target_area.y ~= nil and target_area.z ~= nil)
 
 	local start_hash = minetest.hash_node_position(start_pos)
-	local target_hash = minetest.hash_node_position(end_pos)
+	local target_pos = vector.new(target_area.x, target_area.y, target_area.z)
+	local target_hash = minetest.hash_node_position(target_pos)
+	local target_inside = target_area.inside
 
-	if end_pos.inside == nil then
-		-- don't modify parameters
-		end_pos = { x=end_pos.x, y=end_pos.y, z=end_pos.z, inside=function(self, pos, hash) return hash == target_hash end }
+	local h_start = get_estimated_cost(start_pos, target_pos)
+
+	minetest.log("action", string.format("find_path: start %s dest %s hCost=%d",
+			minetest.pos_to_string(start_pos),
+			minetest.pos_to_string(target_pos), h_start))
+
+	-- create a custom inside function if there is none defined
+	if target_inside == nil then
+		target_inside = function(self, pos, hash) return hash == target_hash end
 	end
 
 	local openSet = slist_new() -- slist of active "walkers"
-	local closedSet = {}        -- retired "walkers"
+	local closedSet = {}        -- retired "walkers" / visited nodes
 
-	local h_start = get_estimated_cost(start_pos, end_pos)
-	openSet:insert({hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
-	                pos = start_pos, hash = start_hash })
+	openSet:insert({ hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
+	                 pos = start_pos, hash = start_hash })
 
-	-- return a path and reverse path consisting of only the dest
-	-- this is used for the two "impossible" error paths
+	-- return a path and reverse path consisting of a single waypoint set to
+	-- target_pos. This is used for the failure paths.
 	local function failed_path()
 		if options.want_nil then return nil end
-		local tmp = { vector.new(end_pos) }
+		local tmp = { vector.new(target_pos) }
 		return tmp, tmp
 	end
 
@@ -997,43 +1029,48 @@ function pathfinder.find_path(start_pos, end_pos, entity, options)
 	end
 
 	-- iterate as long as there are active walkers
-	while openSet.count > 0 do
+	local max_walker_cnt = 1
+	while true do
 		local current_values = openSet:pop_head()
-		--  if current_values == nil then
-		--  	minetest.log("warning", string.format("slist count is %d, put pop_head() returned nil", openSet.count))
-		--  	return nil, fail.no_path
-		--  end
+		if current_values == nil then break end
+		max_walker_cnt = math.max(max_walker_cnt, openSet.count)
 
-		--minetest.log("action", string.format("processing %s %x",
-		--	minetest.pos_to_string(current_values.pos), current_values.hash))
+		minetest.log("action", string.format("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d",
+				minetest.pos_to_string(current_values.pos), current_values.hash,
+				current_values.fCost, current_values.gCost, current_values.hCost, openSet.count))
 
 		-- add to the closedSet so we don't revisit this location
 		closedSet[current_values.hash] = current_values
 
-		-- check for a walker in the destination zone
-		if end_pos:inside(current_values.pos, current_values.hash) then
-			minetest.log("action", string.format(" walker %s is inside end_pos, hash=%x parent=%s",
-				minetest.pos_to_string(current_values.pos), current_values.hash, tostring(current_values.parent)))
+		-- Check for a walker in the destination zone.
+		-- Note that we only check the "best" walker.
+		if target_inside(target_area, current_values.pos, current_values.hash) then
+			minetest.log("action", string.format(" walker %s is inside end_pos, hash=%x parent=%x gCost=%d",
+					minetest.pos_to_string(current_values.pos), current_values.hash,
+					current_values.parent or 0, current_values.gCost))
 			return collect_path(current_values.hash)
 		end
 
+		-- process possible moves (neighbors)
 		for _, neighbor in pairs(get_neighbors(current_values.pos, args)) do
-			if neighbor.cost ~= nil and (end_pos.outside == nil or not end_pos:outside(current_values.pos, current_values.hash))
+			-- do not process if outside of the search zone
+			if (target_area.outside == nil or
+			    not target_area:outside(current_values.pos, current_values.hash))
 			then
-				--minetest.log("action", string.format(" neightbor %s %x",
-				--									 minetest.pos_to_string(neighbor.pos), neighbor.hash))
-				local move_cost_to_neighbor = current_values.gCost + neighbor.cost
+				local new_gCost = current_values.gCost + neighbor.cost
 				-- if we already visited this node, then we only store if the new cost is less (unlikely)
 				local old_closed = closedSet[neighbor.hash]
-				if old_closed == nil or old_closed.gCost > move_cost_to_neighbor then
+				if old_closed == nil or new_gCost < old_closed.gCost then
 					-- We also want to avoid adding a duplicate (worse) open walker
 					local old_open = openSet:get(neighbor.hash)
-					if old_open == nil or move_cost_to_neighbor < old_open.gCost then
-						local hCost = get_estimated_cost(neighbor.pos, end_pos)
+					if old_open == nil or new_gCost < old_open.gCost then
+						local new_hCost = get_estimated_cost(neighbor.pos, target_pos)
+						minetest.log("action", string.format(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d",
+								minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost))
 						openSet:insert({
-							gCost = move_cost_to_neighbor,
-							hCost = hCost,
-							fCost = move_cost_to_neighbor + hCost,
+							gCost = new_gCost,
+							hCost = new_hCost,
+							fCost = new_gCost + new_hCost,
 							parent = current_values.hash,
 							pos = neighbor.pos,
 							hash = neighbor.hash
@@ -1045,28 +1082,20 @@ function pathfinder.find_path(start_pos, end_pos, entity, options)
 
 		-- In ideal situations, we will bee-line directly towards the dest.
 		-- Complex obstacles cause an explosion of open walkers.
-		-- Prevent excessive CPU usage by limiting the number of open walkers.
+		-- Prevent excessive memory/CPU usage by limiting the number of open walkers.
 		-- The caller will travel to the end of the path and then try again.
 		-- This limit may cause failure where success should be possible.
-		if openSet.count > 100 then
-			minetest.log("warning", "too many walkers in "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
+		if openSet.count > 200 then
+			minetest.log("warning", string.format("too many walkers in %s to %s",
+					minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
 			return failed_path()
-			-- return collect_path(current_values.hash)
-		end
-
-		-- Catch running out of walkers without hitting the end.
-		-- This happens when there is no possible path to the target.
-		-- The caller should try again after following the path.
-		if openSet.count == 0 then
-			minetest.log("warning", "no path "..minetest.pos_to_string(start_pos)..' to '..minetest.pos_to_string(end_pos))
-			-- FIXME: the unresolved path likely leads away. most common failure
-			-- is dest is above start.
-			return failed_path()
-			-- return collect_path(current_values.hash)
 		end
 	end
 
-	-- FIXME: this isn't reachable
+	-- We ran out of walkers without hitting the target.
+	-- This happens when there is no possible path to the target.
+	minetest.log("warning", string.format("no path in %s to %s",
+			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
 	return failed_path()
 end
 
@@ -1208,8 +1237,7 @@ function pathfinder.find_path_box(start_pos, entity, dest_pos1, dest_pos2)
 	if vector.equals(minp, maxp) then
 		return pathfinder.find_path(start_pos, endp, entity)
 	end
-	local midp = vector.round(
-		{x=(minp.x+maxp.x)/2, y=(minp.y+maxp.y)/2, z=(minp.z+maxp.z)/2})
+	local midp = vector.round(vector.new((minp.x+maxp.x)/2, (minp.y+maxp.y)/2, (minp.z+maxp.z)/2))
 
 	local endpos = pathfinder.make_dest_min_max(midp, minp, maxp)
 	return pathfinder.find_path(pos, endpos, entity)
@@ -1237,23 +1265,25 @@ function pathfinder.wayzone_flood(start_pos, area)
 	assert(area ~= nil and area.inside ~= nil)
 
 	local args = get_find_path_args({ want_diag=false })
+	--args.debug = true
 	local start_node = minetest.get_node(start_pos)
 	local start_nodedef = minetest.registered_nodes[start_node.name]
-	local below_pos = vector.add(start_pos, {x=0,y=-1,z=0})
+	local below_pos = vector.new(start_pos.x, start_pos.y - 1, start_pos.z)
 	local below_node = minetest.get_node(below_pos)
+	local in_water = is_node_water(start_node)
 	args.nc = nodecache.new(start_pos)
 
 	minetest.log("action",
-		string.format("wayzone_flood @ %s %s w=%s h=%d j=%d f=%d below=%s %s",
+		string.format("wayzone_flood @ %s %s w=%s h=%d j=%d f=%d below=%s %s water=%s",
 			minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
 			args.height, args.jump_height, args.fear_height,
-			minetest.pos_to_string(below_pos), below_node.name))
+			minetest.pos_to_string(below_pos), below_node.name, tostring(in_water)))
 
 	local openSet = {}    -- set of active walkers; openSet[hash] = { pos=pos, hash=hash }
 	local visitedSet = {} -- retired "walkers"; visitedSet[hash] = true
 	local exitSet = {}    -- outside area or drop by more that jump_height; exitSet[hash] = true
 
-	-- wrap 'add' with a function for logging
+	-- Wrap 'add' with a function for logging
 	local function add_open(item)
 		--minetest.log("action", string.format(" add_open %s %x", minetest.pos_to_string(item.pos), item.hash))
 		openSet[item.hash] = item
@@ -1268,8 +1298,7 @@ function pathfinder.wayzone_flood(start_pos, area)
 	while true do
 		local _, item = next(openSet)
 		if item == nil then break end
-
-		minetest.log("action", string.format(" process %s %x", minetest.pos_to_string(item.pos), item.hash))
+		--minetest.log("action", string.format(" process %s %x", minetest.pos_to_string(item.pos), item.hash))
 
 		-- remove from openSet and process
 		openSet[item.hash] = nil
@@ -1277,9 +1306,12 @@ function pathfinder.wayzone_flood(start_pos, area)
 		for _, n in pairs(get_neighbors(item.pos, args)) do
 			-- skip if already visited or queued
 			if visitedSet[n.hash] == nil and openSet[n.hash] == nil then
-				minetest.log("action", string.format("   n %s %x", minetest.pos_to_string(n.pos), n.hash))
+				local ii = args.nc:get_at_pos(n.pos)
+				--minetest.log("action",
+				--	string.format("   n %s %x w=%s/%s",
+				--		minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water)))
 				local dy = math.abs(n.pos.y - item.pos.y)
-				if not area:inside(n.pos, n.hash) or dy > y_lim then
+				if not area:inside(n.pos, n.hash) or dy > y_lim or ii.water ~= in_water then
 					exitSet[n.hash] = true
 				else
 					visitedSet[n.hash] = true
@@ -1309,7 +1341,7 @@ function pathfinder.can_stand_at(pos, height)
 		return false
 	end
 
-	local below = {x=pos.x, y=pos.y-1, z=pos.z}
+	local below = vector.new(pos.x, pos.y-1, pos.z)
 	if not pathfinder.is_node_standable(below) then
 		local node = minetest.get_node(below)
 		local nodedef = minetest.registered_nodes[node.name]
@@ -1328,7 +1360,7 @@ function pathfinder.can_stand_at(pos, height)
 	end
 	-- if height = 2, we check 1 node above pos (which we already checked)
 	for hh = 1, height - 1 do
-		local tpos = {x=pos.x, y=pos.y+hh, z=pos.z}
+		local tpos = vector.new(pos.x, pos.y+hh, pos.z)
 		if not is_node_clear(tpos) then
 			minetest.log("warning", "can_stand_at: not clear " .. minetest.pos_to_string(tpos))
 			return false
@@ -1341,11 +1373,27 @@ function pathfinder.get_ground_level(pos)
 	return get_neighbor_ground_level(pos, 30927, 30927)
 end
 
+-- this is called upon use of a tool for debug
 local function node_check(pos)
-	local args = neighbor_args(pos, get_find_path_args({ want_diag=false }))
+	local args = neighbor_args(pos, get_find_path_args({ want_diag=true, want_climb=true, want_swim=true }))
 	local neighbors = {}
 
-	minetest.log("action", "node_check @ "..minetest.pos_to_string(pos))
+	-- args.start={ stand=true, jump=true, climb_up=false, climb_down=false, swim_up=false, swim_down=false, in_water=false }
+
+	minetest.log("action", string.format("node_check @ %s diag=%s climb=%s swim=%s start.stand=%s jump=%s climb_up=%s climb_down=%s swim_up=%s swim_down=%s in_water=%s",
+			minetest.pos_to_string(pos),
+			tostring(args.want_diag),
+			tostring(args.want_climb),
+			tostring(args.want_swim),
+			tostring(args.want_swim),
+			tostring(args.start.stand),
+			tostring(args.start.jump),
+			tostring(args.start.climb_up),
+			tostring(args.start.climb_down),
+			tostring(args.start.swim_up),
+			tostring(args.start.swim_down),
+			tostring(args.start.in_water)))
+
 	if pathfinder.can_stand_at(pos, 2) then
 		minetest.log("action", "  can_stand_at = true")
 	end

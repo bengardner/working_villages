@@ -17,7 +17,7 @@ local function find_path_for_player(player, itemstack, pos1)
 	local y = meta:get_int("pos_y")
 	local z = meta:get_int("pos_z")
 	if x and y and z then
-		local pos2 = {x=x, y=y, z=z}
+		local pos2 = vector.new(x, y, z)
 		local p1_g = pathfinder.get_ground_level(pos1)
 		local p2_g = pathfinder.get_ground_level(pos2)
 		--local pos1 = vector.round(player:get_pos())
@@ -51,7 +51,7 @@ local function find_path_for_player2(player, itemstack, pos1)
 	if not meta then
 		return
 	end
-	local pos2 = {x=meta:get_int("pos_x"), y=meta:get_int("pos_y"), z=meta:get_int("pos_z")}
+	local pos2 = vector.new(meta:get_int("pos_x"), meta:get_int("pos_y"), meta:get_int("pos_z"))
 	if not (pos2.x and pos2.y and pos2.z) then
 		return
 	end
