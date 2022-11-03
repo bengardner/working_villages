@@ -60,6 +60,8 @@ shouldn't matter, as the path ends as soon as the walker hits the end area.
 local function get_estimated_cost(start_pos, end_pos)
 	if false then
 		return 1
+	elseif true then
+		return vector.distance(start_pos, end_pos) * 10
 	else
 		local distX = math.abs(start_pos.x - end_pos.x)
 		local distZ = math.abs(start_pos.z - end_pos.z)
@@ -513,7 +515,7 @@ local function scan_neighbor(nc, height, jump_height, fear_height)
 				-- We can "stand" at the bottom of @height water nodes
 				water_cnt = water_cnt +1
 				if water_cnt >= height then
-					gpos = vector.new(nc.pos.x, nc.pos.y+dy, nc.pos.z)
+					gpos = vector.new(nc.pos.x, nc.pos.y+dy+1, nc.pos.z)
 					break
 				end
 			end
@@ -674,12 +676,12 @@ local function neighbor_args(current_pos, args)
 	end
 	new_args.start = scan_neighbor_start(new_args.nc, args.height, args.jump_height)
 
-	if args.debug then
+	if args.debug > 1 then
 		local xx = {}
 		for k, v in pairs(new_args.start) do
 			table.insert(xx, string.format(" %s=%s", k, tostring(v)))
 		end
-		minetest.log("warning",
+		minetest.log("action",
 			string.format("start: %s %s", minetest.pos_to_string(current_pos), table.concat(xx, "")))
 	end
 	return new_args
@@ -706,7 +708,7 @@ local function neighbors_collect_no_diag(neighbors, args)
 					if args.start.in_water or info.in_water then
 						cost = cost * 5
 					end
-					if args.debug then
+					if args.debug > 1 then
 						minetest.log("action",
 							string.format(" neighbor %s %s cost=%d can_walk=%s can_jump=%s in_water=%s",
 								minetest.pos_to_string(info.npos), minetest.pos_to_string(info.gpos),
@@ -719,7 +721,7 @@ local function neighbors_collect_no_diag(neighbors, args)
 					})
 				end
 			else
-				if args.debug then
+				if args.debug > 1 then
 					minetest.log("action",
 						string.format(" neighbor %s NONE can_walk=%s can_jump=%s",
 							minetest.pos_to_string(info.npos),
@@ -823,7 +825,6 @@ local function get_neighbors(current_pos, args)
 
 	if args.want_diag == true then
 		neighbors_collect_diag(neighbors, args)
-		neighbors_collect_no_diag(neighbors, args)
 	else
 		neighbors_collect_no_diag(neighbors, args)
 	end
@@ -847,6 +848,9 @@ local function get_neighbors(current_pos, args)
 		local cost = 15
 		if args.start.swim_down and not args.start.climb_down then
 			cost = cost * 5
+		end
+		if args.debug then
+			minetest.log("action", "  ++ down "..minetest.pos_to_string(npos))
 		end
 		table.insert(neighbors, {
 			pos = npos,
@@ -1035,9 +1039,9 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 		if current_values == nil then break end
 		max_walker_cnt = math.max(max_walker_cnt, openSet.count)
 
-		minetest.log("action", string.format("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d",
-				minetest.pos_to_string(current_values.pos), current_values.hash,
-				current_values.fCost, current_values.gCost, current_values.hCost, openSet.count))
+		--minetest.log("action", string.format("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d",
+		--		minetest.pos_to_string(current_values.pos), current_values.hash,
+		--		current_values.fCost, current_values.gCost, current_values.hCost, openSet.count))
 
 		-- add to the closedSet so we don't revisit this location
 		closedSet[current_values.hash] = current_values
@@ -1065,8 +1069,8 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 					local old_open = openSet:get(neighbor.hash)
 					if old_open == nil or new_gCost < old_open.gCost then
 						local new_hCost = get_estimated_cost(neighbor.pos, target_pos)
-						minetest.log("action", string.format(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d",
-								minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost))
+						--minetest.log("action", string.format(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d",
+						--		minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost))
 						openSet:insert({
 							gCost = new_gCost,
 							hCost = new_hCost,
@@ -1096,6 +1100,27 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 	-- This happens when there is no possible path to the target.
 	minetest.log("warning", string.format("no path in %s to %s",
 			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
+	minetest.add_particle({
+		pos = target_pos,
+		expirationtime = 15,
+		playername = "singleplayer",
+		glow = minetest.LIGHT_MAX,
+		texture = "wayzone_exit.png",
+		size = 5,
+	})
+	local texture = "wayzone_node.png"
+	for hh, ii in pairs(closedSet) do
+		--minetest.log("action", string.format(" visited %s", minetest.pos_to_string(ii.pos)))
+		minetest.add_particle({
+			pos = ii.pos,
+			expirationtime = 15,
+			playername = "singleplayer",
+			glow = minetest.LIGHT_MAX,
+			texture = texture,
+			size = 3,
+		})
+	end
+
 	return failed_path()
 end
 
@@ -1258,14 +1283,15 @@ is > jump_height).
 @area must contain either the function 'inside(self, pos, hash)' or minp and maxp.
    minp/maxp are vectors for the min/max corners of the area.
 @args may contain height, jump_height and fear_height. defaults are 2, 1, 2.
+@debug is a verbosity indicator 0=none (default), 1+=log stuff
 @return visited_nodes, exit_nodes
 --]]
-function pathfinder.wayzone_flood(start_pos, area)
+function pathfinder.wayzone_flood(start_pos, area, debug)
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
 	assert(area ~= nil and area.inside ~= nil)
 
 	local args = get_find_path_args({ want_diag=false })
-	--args.debug = true
+	args.debug = debug or 0
 	local start_node = minetest.get_node(start_pos)
 	local start_nodedef = minetest.registered_nodes[start_node.name]
 	local below_pos = vector.new(start_pos.x, start_pos.y - 1, start_pos.z)
@@ -1273,11 +1299,13 @@ function pathfinder.wayzone_flood(start_pos, area)
 	local in_water = is_node_water(start_node)
 	args.nc = nodecache.new(start_pos)
 
-	minetest.log("action",
-		string.format("wayzone_flood @ %s %s w=%s h=%d j=%d f=%d below=%s %s water=%s",
-			minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
-			args.height, args.jump_height, args.fear_height,
-			minetest.pos_to_string(below_pos), below_node.name, tostring(in_water)))
+	if args.debug > 0 then
+		minetest.log("action",
+			string.format("wayzone_flood @ %s %s walk=%s h=%d j=%d f=%d below=%s %s water=%s",
+				minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
+				args.height, args.jump_height, args.fear_height,
+				minetest.pos_to_string(below_pos), below_node.name, tostring(in_water)))
+	end
 
 	local openSet = {}    -- set of active walkers; openSet[hash] = { pos=pos, hash=hash }
 	local visitedSet = {} -- retired "walkers"; visitedSet[hash] = true
@@ -1298,7 +1326,9 @@ function pathfinder.wayzone_flood(start_pos, area)
 	while true do
 		local _, item = next(openSet)
 		if item == nil then break end
-		--minetest.log("action", string.format(" process %s %x", minetest.pos_to_string(item.pos), item.hash))
+		if args.debug > 1 then
+			minetest.log("action", string.format(" process %s %x", minetest.pos_to_string(item.pos), item.hash))
+		end
 
 		-- remove from openSet and process
 		openSet[item.hash] = nil
@@ -1307,9 +1337,11 @@ function pathfinder.wayzone_flood(start_pos, area)
 			-- skip if already visited or queued
 			if visitedSet[n.hash] == nil and openSet[n.hash] == nil then
 				local ii = args.nc:get_at_pos(n.pos)
-				--minetest.log("action",
-				--	string.format("   n %s %x w=%s/%s",
-				--		minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water)))
+				if args.debug > 1 then
+					minetest.log("action",
+						string.format("   n %s %x w=%s/%s",
+							minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water)))
+				end
 				local dy = math.abs(n.pos.y - item.pos.y)
 				if not area:inside(n.pos, n.hash) or dy > y_lim or ii.water ~= in_water then
 					exitSet[n.hash] = true

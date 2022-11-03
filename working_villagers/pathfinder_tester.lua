@@ -7,6 +7,7 @@ local log = working_villages.require("log")
 
 local pathfinder = working_villages.require("pathfinder")
 local waypoints = working_villages.require("waypoint_zones")
+local wayzone_path = working_villages.require("wayzone_pathfinder")
 
 local function find_path_for_player(player, itemstack, pos1)
 	local meta = itemstack:get_meta()
@@ -57,6 +58,10 @@ local function find_path_for_player2(player, itemstack, pos1)
 	end
 	local pos1 = pathfinder.get_ground_level(pos1)
 	local pos2 = pathfinder.get_ground_level(pos2)
+	if pos1 == nil or pos2 == nil then
+		minetest.log("action", string.format("pathfinder tool: invalid positions s=%s e=%s", tostring(pos1), tostring(pos2)))
+		return
+	end
 	minetest.log("action",
 		string.format("Path from %s to %s",
 			minetest.pos_to_string(pos1),
@@ -69,7 +74,8 @@ local function find_path_for_player2(player, itemstack, pos1)
 
 	local time_start = minetest.get_us_time()
 
-	local wzp = waypoints.path_start(pos1, pos2)
+	--local wzp = waypoints.path_start(pos1, pos2)
+	local wzp = wayzone_path.start(pos1, pos2)
 
 	local time_end = minetest.get_us_time()
 	local time_diff = time_end - time_start

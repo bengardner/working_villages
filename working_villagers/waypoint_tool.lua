@@ -6,23 +6,28 @@ The clicked node must be walkable with two clear nodes above.
 local S = default.get_translator
 
 local pathfinder = working_villages.require("pathfinder")
-local wayzones = working_villages.require("waypoint_zones")
+local wayzone_path = working_villages.require("wayzone_pathfinder")
+local wayzone_store = working_villages.require("wayzone_store")
+local wayzone_utils = working_villages.require("wayzone_utils")
 
 local waypoint_tool_name = "working_villages:waypoint_tool"
 
 local function do_waypoint_flood(user, pos, all_zones)
 	minetest.log("action", "* waypoint_tool start @ "..minetest.pos_to_string(pos).." "..(all_zones and "full" or "single"))
 
-	local ii = wayzones.get_pos_info(pos)
+	local ss = wayzone_store.get()
+
+	local ii = ss:get_pos_info(pos)
 
 	if all_zones then
-		for idx, wz in ipairs(ii.wzd) do
-			wayzones.show_particles_wz(wz)
+		for idx, wz in ipairs(ii.wzc) do
+			minetest.log("action", "* waypoint_tool show "..wz.key)
+			wayzone_utils.show_particles_wz(wz)
 		end
 	else
-		local ii = wayzones.get_pos_info(pos)
 		if ii.wz ~= nil and ii.wz:inside(pos) then
-			wayzones.show_particles_wz(ii.wz)
+			minetest.log("action", "* waypoint_tool show "..ii.wz.key)
+			wayzone_utils.show_particles_wz(ii.wz)
 		end
 	end
 

@@ -105,6 +105,26 @@ local wz_colors = {
 	{   0, 128, 255 },
 }
 
+-- put a particle at @pos using args.
+-- set texture OR name+color
+-- args={texture=text, name=filename, color={r,g,b}, size=4, time=10}
+function wayzones.put_particle(pos, args)
+	local vt = args.texture
+	if vt == nil then
+		local cc = args.color or {255,255,255}
+		local fn = args.name or "wayzone_node.png"
+		vt = string.format("%s^[multiply:#%02x%02x%02x", fn, cc[1], cc[2], cc[3])
+	end
+	minetest.add_particle({
+		pos = pos,
+		expirationtime = args.time or 10,
+		playername = "singleplayer",
+		glow = minetest.LIGHT_MAX,
+		texture = vt,
+		size = args.size or 4,
+	})
+end
+
 -- show particles for one wayzone
 function wayzones.show_particles_wz(wz)
 	local vn = "wayzone_node.png"
@@ -116,36 +136,15 @@ function wayzones.show_particles_wz(wz)
 	local xcc = string.format("%s^[multiply:#%02x%02x%02x", xc, cc[1], cc[2], cc[3])
 	local cpos = wz:get_center_pos()
 	local dy = -0.25 + (wz.index / 8)
-	-- minetest.log("action", " center "..minetest.pos_to_string(cpos))
-	minetest.add_particle({
-		pos = vector.new(cpos.x, cpos.y+dy, cpos.z),
-		expirationtime = 10,
-		playername = "singleplayer",
-		glow = minetest.LIGHT_MAX,
-		texture = xcc,
-		size = 4,
-	})
+
+	wayzones.put_particle(vector.new(cpos.x, cpos.y+dy, cpos.z), {texture=xcc})
 
 	for pp in wz:iter_visited() do
-		minetest.add_particle({
-			pos = vector.new(pp.x, pp.y+dy, pp.z),
-			expirationtime = 10,
-			playername = "singleplayer",
-			glow = minetest.LIGHT_MAX,
-			texture = vt,
-			size = 4,
-		})
+		wayzones.put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=vt})
 	end
 
 	for pp in wz:iter_exited() do
-		minetest.add_particle({
-			pos = vector.new(pp.x, pp.y+dy, pp.z),
-			expirationtime = 10,
-			playername = "singleplayer",
-			glow = minetest.LIGHT_MAX,
-			texture = xt,
-			size = 4,
-		})
+		wayzones.put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=xt})
 	end
 end
 
@@ -260,33 +259,37 @@ local function wayzones_link_clear(from_wzd, to_wzd)
 	end
 end
 
--- refresh the links from from_wzd to to_wzd
+
+-- Refresh the links from from_wzd to to_wzd
+-- This is called right before the wayzones are used in wzpath_rebuild()
+-- We are only interested in updating links going from @from_wzd to @to_wzd.
 local function wayzones_refresh_links(from_wzd, to_wzd)
-	-- No point in looking at self-links if there are less than 2 wayzones or
-	-- if either chunk has 0 wayzones
+	-- No point in looking at self-links if there are less than 2 wayzones OR
+	-- from_wzd is empty.
 	if (from_wzd.hash == to_wzd.hash and #from_wzd < 2) or #from_wzd == 0 or #to_wzd == 0 then
 		return
 	end
 
-	-- did we already update the links?
+	-- Did we already update the links?
 	if from_wzd.adjacent[to_wzd.hash] == to_wzd.generation then
-		--  minetest.log("action",
-		--  			 string.format("wayzones_refresh_links: already updated %x (%d) -> %x (%d)",
-		--  						   from_wzd.hash, #from_wzd, to_wzd.hash, #to_wzd))
+		--minetest.log("action",
+		--	string.format("wayzones_refresh_links: already updated %x (%d) -> %x (%d)",
+		--		from_wzd.hash, #from_wzd, to_wzd.hash, #to_wzd))
 		return
 	end
 
-	--  minetest.log("action",
-	--  		  string.format("wayzones_refresh_links: %x (%d) -> %x (%d)",
-	--  						from_wzd.hash, #from_wzd, to_wzd.hash, #to_wzd))
+	--minetest.log("action",
+	--	string.format("wayzones_refresh_links: %x (%d) -> %x (%d)",
+	--		from_wzd.hash, #from_wzd, to_wzd.hash, #to_wzd))
 
 	-- clear existing links: from_wzd -> to_wzd
+	-- We don't care about incoming links, as we won't be using them.
 	wayzones_link_clear(from_wzd, to_wzd)
 
 	-- build new links
 	for to_idx, to_wz in ipairs(to_wzd) do
 		for from_idx, from_wz in ipairs(from_wzd) do
-			-- don't link a wayzone to itself
+			-- don't link a wayzone to itself (support internal links)
 			if from_wz.key ~= to_wz.key then
 				--  minetest.log("action",
 				--  	string.format("wayzones_refresh_links: check %s -> %s",
@@ -311,6 +314,27 @@ local function wayzones_refresh_links(from_wzd, to_wzd)
 
 	-- note that we updated the links to the adjacent chunk
 	from_wzd.adjacent[to_wzd.hash] = to_wzd.generation
+end
+
+-- refresh links between chunks. this is called from the pathfinder when it
+-- checks adjacent
+local function wayzones_refresh_links_between_chunks(wzd1, wzd2)
+	-- No point in looking at self-links if there are less than 2 wayzones or
+	-- if either chunk has 0 wayzones
+	if (from_wzd.hash == to_wzd.hash and #from_wzd < 2) or #from_wzd == 0 or #to_wzd == 0 then
+		return
+	end
+
+	-- remove any "old" links
+	for _, wz in ipairs(wzd1) do
+		wz:link_del(wzd2.hash)
+	end
+	for _, wz in ipairs(wzd2) do
+		wz:link_del(wzd1.hash)
+	end
+
+
+
 end
 
 -- private function to get or regen the chunk data
@@ -447,6 +471,7 @@ function wayzones.process_chunk(pos)
 	end
 	chunk_wzd.gen_clock = os.clock()
 	chunk_wzd.hash = chunk_hash
+	chunk_wzd.pos = chunk_pos
 	chunk_wzd.adjacent = {} -- start with no adjacent info
 	wayzones.store[chunk_hash] = chunk_wzd
 
@@ -540,7 +565,7 @@ local function get_pos_info(pos)
 	info.cpos = wayzone.normalize_pos(info.pos)
 	info.chash = minetest.hash_node_position(info.cpos)
 	info.wzd = get_chunk_data(info.chash)
-	info.wz_idx, info.wz = wpz_find_visited_hash(info.wzd, info.hash)
+	info.wz_idx, info.wz = wpz_find_visited_pos(info.wzd, info.pos)
 	--[[
 	If info.wz is nil, then we either have a position that isn't
 	"valid" (standable on the ground) OR the chunk data is obsolete.
@@ -574,44 +599,108 @@ wayzones.get_pos_info = get_pos_info
 
 -------------------------------------------------------------------------------
 
--- Get the next position goal and remove it from the path.
+-- Get the next position goal
 function wayzone_path:next_goal(cur_pos)
 	-- is navigation 100% complete?
 	if self.end_pos:inside(cur_pos) then
-		minetest.log("action", "next_goal: inside end_pos "..minetest.pos_to_string(cur_pos))
+		minetest.log("action", string.format("next_goal: inside end_pos %s", minetest.pos_to_string(cur_pos)))
 		return nil
 	end
 
 	-- return the next pos on the path, if there are any left
 	if self.path ~= nil then
 		self.path_idx = (self.path_idx or 0) + 1
-		if self.path_idx < #self.path then
+		if self.path_idx <= #self.path then
 			local pp = self.path[self.path_idx]
 			minetest.log("action",
-				string.format("next_goal: idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
+				string.format("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
 			return pp
 		end
-		self.path = nil
-		self.path_idx = 0
+	end
+	self.path = nil
+	self.path_idx = 0
+
+	if self.wzpath == nil then
+		if self.wzpath_fail then
+			minetest.log("action", string.format("wzpath_rebuild(%s) already failed", minetest.pos_to_string(cur_pos)))
+			return nil
+		end
+		-- rebuild the path
+		minetest.log("action", string.format("calling wzpath_rebuild(%s)", minetest.pos_to_string(cur_pos)))
+		self.wzpath_idx = 0
+		if not self:wzpath_rebuild(cur_pos) then
+			minetest.log("action", string.format("rebuild at %s fail", minetest.pos_to_string(cur_pos)))
+			self.wzpath_fail = true
+			return nil
+		end
+
+		-- log the wayzone path
+		for idx, wz_key in ipairs(self.wzpath) do
+			local cpos, cidx = wayzone.key_decode_pos(wz_key)
+			minetest.log("action", string.format(" wzpath[%d] = %s  %s:%d", idx, wz_key, minetest.pos_to_string(cpos), cidx))
+		end
+		wayzones.show_particles_wzpath(self.wzpath, cur_pos, self.end_pos)
 	end
 
-	-- rebuild the path after finishing the last leg (is this needed? only if self.wzpath is empty?)
-	minetest.log("action", string.format("calling wzpath_rebuild(%s)", minetest.pos_to_string(cur_pos)))
-	if not self:wzpath_rebuild(cur_pos) then
-		minetest.log("action", string.format("rebuild at %s fail", minetest.pos_to_string(cur_pos)))
-	 	return nil
+	-- wzpath is not nil
+	local si = get_pos_info(cur_pos)
+	local di = get_pos_info(self.end_pos)
+	local allowed_wz = { si.wz, di.wz }
+	local target_area
+	self.wzpath_idx = (self.wzpath_idx or 0) + 1
+	if self.wzpath_idx <= #self.wzpath then
+		-- head towards the next wayzone
+		local next_wz_key = self.wzpath[self.wzpath_idx]
+		local next_chash, next_index = wayzone.key_decode(next_wz_key)
+		local next_wzd = get_chunk_data(next_chash)
+		local next_wz = next_wzd[next_index]
+		minetest.log("action",
+			string.format("next_goal: wz [%d/%d] %s %s cpos=%s idx=%d cur=%s end=%s",
+				self.wzpath_idx, #self.wzpath,
+				next_wz_key, next_wz.key,
+				minetest.pos_to_string(next_wzd.pos),
+				next_index,
+				minetest.pos_to_string(cur_pos),
+				minetest.pos_to_string(self.end_pos)))
+
+		minetest.log("action", string.format("added allowed_wz: %s", next_wz.key))
+		table.insert(allowed_wz, next_wz)
+		target_area = next_wz:get_dest()--cur_pos, self.end_pos)
+	else
+		-- heading towards the target
+		target_area = self.end_pos
+	end
+	-- bound the search area to those chunks that we just looked at
+	wayzone.outside_wz(target_area, allowed_wz)
+	for _, wz in ipairs(target_area.wz_ok) do
+		minetest.log("action", string.format(" find_path wz_ok: %s", wz.key))
 	end
 
-	--[[
-	FIXME: we shouldn't include the final wayzone in the list
-2022-11-01 21:23:35: ACTION[Server]: start: (655,5,119) 807080008280:1 end: (665,5,102) 806080008290:1
-2022-11-01 21:23:35: ACTION[Server]:  center (663,5,119)
-2022-11-01 21:23:35: ACTION[Server]:  center (664,5,103)
-2022-11-01 21:23:35: ACTION[Server]:  wzpath[1] = 807080008290:1
-2022-11-01 21:23:35: ACTION[Server]:  wzpath[2] = 806080008290:1
-2022-11-01 21:23:35: ACTION[Server]: find_path: start (655,5,119) dest (664,5,103) hCost=196
-	]]
-
+	-- find the path
+	self.path = pathfinder.find_path(cur_pos, target_area, nil, {want_nil=true})
+	if self.path == nil then
+		minetest.log("action",
+			string.format("find_path %s -> %s failed",
+				minetest.pos_to_string(cur_pos), minetest.pos_to_string(target_area)))
+		for _, wz in ipairs(allowed_wz) do
+			minetest.log("action", string.format("allowed_wz: %s", wz.key))
+			wayzones.show_particles_wz(wz)
+		end
+		return nil
+	end
+	if #self.path > 0 then
+		minetest.log("action", string.format("find_path %s -> %s len %d",
+			minetest.pos_to_string(cur_pos),
+			minetest.pos_to_string(self.end_pos), #self.path))
+		self.path_idx = 1
+		local pp = self.path[1]
+		minetest.log("action",
+			string.format("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
+		return pp
+	end
+	minetest.log("action", string.format("next_goal: empty path"))
+	return nil
+--[[
 	-- set the target_area to either self.end_pos or the 2nd wayzone
 	local si = get_pos_info(cur_pos)
 	local di = get_pos_info(self.end_pos)
@@ -681,6 +770,7 @@ function wayzone_path:next_goal(cur_pos)
 	-- 	minetest.pos_to_string(wz_dest), #self.path))
 	-- self.path_idx = 1
 	-- return self.path[1]
+]]
 end
 
 --[[
@@ -756,20 +846,8 @@ function wayzone_path:wzpath_rebuild(start_pos)
 	local si = get_pos_info(start_pos)
 	local di = get_pos_info(self.end_pos)
 
-	-- bail if there isn't a wayzone for each
-	if si.wz == nil or di.wz == nil or si.cpos == nil then
-		-- Either the position is floating above ground or the chunk data is
-		-- no longer accurate.
-		-- TODO: set a flag to re-scan the chunk
-		if si.wz == nil then
-			minetest.log("warning",
-				string.format("no wayzone for s=%s c=%s",
-					minetest.pos_to_string(start_pos),
-					minetest.pos_to_string(si.cpos)))
-		end
-		if di.wz == nil then
-			minetest.log("warning", string.format("no wayzone for %s", minetest.pos_to_string(self.end_pos)))
-		end
+	-- bail if there isn't a wayzone for both the start and target
+	if si.wz == nil or di.wz == nil then
 		self.wzpath = nil
 		return false
 	end
@@ -787,12 +865,12 @@ function wayzone_path:wzpath_rebuild(start_pos)
 			minetest.pos_to_string(start_pos), si.wz.key,
 			minetest.pos_to_string(self.end_pos), di.wz.key))
 
-	-- See if si.wz is directly connected to di.wz
+	-- If si.wz is directly connected to di.wz, we will only use find_path().
 	if chunks_are_adjacent(si.cpos, di.cpos) then
 		wayzones_refresh_links(si.wzd, di.wzd)
 		if si.wz:link_test_to(di.wz) then
-			-- minetest.log("warning", string.format(" ++ direct link detected"))
-			self.wzpath = { di.wz.key }
+			minetest.log("warning", string.format(" ++ direct link detected"))
+			self.wzpath = {}
 			return true
 		end
 	end
@@ -847,8 +925,9 @@ function wayzone_path:wzpath_rebuild(start_pos)
 		local rev_wzpath = {}
 		local cur = fwd.closedSet:get(ref_key)
 		-- check parent_key because we don't want to add the start wayzone
-		while cur ~= nil and cur.parent_key ~= nil and #rev_wzpath < 100 do
-			--minetest.log("action", string.format("  fwd %s p=%s", cur.sl_key, cur.parent_key))
+		-- NOTE: the rev_wzpath len check is to protect against coding error
+		while cur ~= nil and cur.parent_key ~= nil and #rev_wzpath < 200 do
+			minetest.log("action", string.format("  fwd %s p=%s", cur.sl_key, cur.parent_key))
 			table.insert(rev_wzpath, cur.sl_key)
 			cur = fwd.closedSet:get(cur.parent_key)
 		end
@@ -858,7 +937,7 @@ function wayzone_path:wzpath_rebuild(start_pos)
 		end
 		-- trace forward through rev.closeSet, adding to wzpath
 		local cur = rev.closedSet:get(ref_key)
-		while cur ~= nil and cur.parent_key ~= nil and cur.parent_key ~= di.wz.key and #wzpath < 100 do
+		while cur ~= nil and cur.parent_key ~= nil and cur.parent_key ~= di.wz.key and #wzpath < 200 do
 			minetest.log("action", string.format("  rev %s p=%s", cur.sl_key, cur.parent_key))
 			table.insert(wzpath, cur.parent_key) -- adding parent, not cur.key
 			cur = fwd.closedSet:get(cur.parent_key)
@@ -870,13 +949,15 @@ function wayzone_path:wzpath_rebuild(start_pos)
 		self.wzpath = wzpath
 		minetest.log("action", string.format("  rolling up path start=%s target=%s", si.wz.key, di.wz.key))
 		for idx, key in ipairs(self.wzpath) do
-			minetest.log("action", string.format("  [%d] %s", idx, key))
+			local cpos, cidx = wayzone.key_decode_pos(key)
+			minetest.log("action", string.format("  [%d] %s -- %s %d", idx, key, minetest.pos_to_string(cpos), cidx))
 		end
 		return true
 	end
 
+	-- NOTE: steps is to prevent hang due to coding error
 	local steps = 0
-	while fwd.openSet.count > 0 and rev.openSet.count > 0 and steps < 200 do
+	while fwd.openSet.count > 0 and rev.openSet.count > 0 and steps < 1000 do
 		steps = steps + 1
 
 		local ff = fwd.openSet:pop_head()
@@ -995,6 +1076,20 @@ function wayzones.path_start(start_pos, end_pos)
 	-- 	-- failed to find a wayzone for the start or dest
 	-- 	return nil, fail.no_path
 	-- end
+
+	wzp.pspawner = minetest.add_particlespawner({
+		amount=1,
+		time=15,
+		texture="wayzone_node.png",
+		glow=14,
+		pos_tween = {
+			style = "fwd",
+			reps = 3,
+			start = 0.0,
+			[1] = vector.new(start_pos),
+			[2] = vector.new(end_pos),
+			}
+		})
 
 	return wzp
 end

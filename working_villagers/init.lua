@@ -41,7 +41,7 @@ working_villages.require("deprecated")
 
 working_villages.require("pathfinder_tester")
 working_villages.require("waypoint_tool")
-working_villages.require("waypoint_zones")
+working_villages.require("wayzone_pathfinder")
 
 --job helpers
 working_villages.require("jobs/util")

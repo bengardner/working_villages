@@ -309,9 +309,21 @@ function wayzone:insert(pos)
 
 	-- the position has to be inside the chunk
 	local lpos = self:pos_to_local(pos)
-	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x >= chunk_size or lpos.y >= chunk_size or lpos.z >= chunk_size then
-		minetest.log("warning", "wayzone: Called insert on ".. minetest.pos_to_string(lpos))
-		return false
+	assert(in_range(lpos.x) and in_range(lpos.y) and in_range(lpos.z))
+
+	-- update minp/maxp
+	if self.minp == nil then
+		self.minp = vector.new(pos)
+		self.maxp = vector.new(pos)
+	else
+		for _, fld in ipairs({'x', 'y', 'z'}) do
+			if self.minp[fld] > pos[fld] then
+				self.minp[fld] = pos[fld]
+			end
+			if self.maxp[fld] < pos[fld] then
+				self.maxp[fld] = pos[fld]
+			end
+		end
 	end
 
 	local bidx, bmask = lpos_to_bytemask(lpos)
@@ -373,65 +385,49 @@ function wayzone:finish(in_water)
 	end
 	self.exited = packed_exited
 
-	-- find the min/max box
-	local minp
-	local maxp
-	for pos in self:iter_visited() do
-		if minp == nil then
-			minp = vector.new(pos)
-			maxp = vector.new(pos)
-		else
-			for _, fld in ipairs({'x', 'y', 'z'}) do
-				if minp[fld] > pos[fld] then
-					minp[fld] = pos[fld]
-				end
-				if maxp[fld] < pos[fld] then
-					maxp[fld] = pos[fld]
-				end
-			end
-		end
-	end
-	self.minp = minp
-	self.maxp = maxp
-
 	-- update the center position
 	wayzone_calc_center(self)
 end
 
 --[[
 Check if a local position is in the visited positions inside the chunk.
-x,y,z should all be in range 0-chunk_size.
+This can be called before and after finish(), so both storage methods need to
+be checked.
 ]]
 function wayzone:inside_local(lpos)
 	-- TODO: remove assert when it all works
 	assert(in_range(lpos.x) and in_range(lpos.y) and in_range(lpos.z))
+
 	-- get the byte index and bit mask
 	local bidx, bmask = lpos_to_bytemask(lpos)
-	local val
 	-- pull the value from the right spot
+	local val
 	if type(self.visited) == "table" then
 		val = self.visited[bidx] or 0
 	else
 		val = string.byte(self.visited, bidx)
 	end
+	assert(val ~= nil)
 
 	return bit.band(val, bmask) > 0
 end
 
+local function pos_inside_min_max(pos, minp, maxp)
+	return not (pos.x < minp.x or pos.y < minp.y or pos.z < minp.z or
+	            pos.x > maxp.x or pos.y > maxp.y or pos.z > maxp.z)
+end
+
 --[[
 Check if a position is inside the chunk.
-This can be called before and after finish(), so both storage methods need to
-be checked.
 ]]
 function wayzone:inside(pos)
-	-- convert to local coordinates
-	local lpos = self:pos_to_local(pos)
-	-- do the box check
-	if lpos.x < 0 or lpos.y < 0 or lpos.z < 0 or lpos.x >= chunk_size or lpos.y >= chunk_size or lpos.z >= chunk_size then
+	-- check the bounding box for the wayzone
+	if self.minp == nil or not pos_inside_min_max(pos, self.minp, self.maxp) then
 		return false
 	end
+
 	-- check the visited array/string
-	return self:inside_local(lpos)
+	return self:inside_local(self:pos_to_local(pos))
 end
 
 --[[
@@ -567,16 +563,20 @@ Create the "end_pos" for this wayzone.
 @target_pos is optional.
   It must be a table with x,y,z. If missing the center position
 ]]
-function wayzone:get_dest(cur_pos)
+function wayzone:get_dest(target_pos)
 	local target_area
-	if cur_pos ~= nil then
-		target_area = closest_to_box(cur_pos, self.minp, self.maxp)
+	if target_pos ~= nil then
+		target_area = vector.new(target_pos)
 	else
+	--if cur_pos ~= nil then
+	--	target_area = closest_to_box(cur_pos, self.minp, self.maxp)
+	--else
 		target_area = self:get_center_pos()
 	end
 
 	target_area.inside = function(fself, pos, hash)
-		return self:inside(pos) -- calling wayzone:inside(), not target_area:inside()
+		-- call wayzone:inside(), not target_area:inside()
+		return self:inside(pos)
 	end
 	return target_area
 end
@@ -603,6 +603,35 @@ function wayzone.outside_chash(target_area, allowed_chash)
 		target_area.outside = function(self, pos, hash)
 			local chash = minetest.hash_node_position(wayzone.normalize_pos(pos))
 			return self.chash_ok[chash] ~= true
+		end
+	end
+end
+
+-- Adds an 'outside' function that allows positions only in the wayzones.
+-- target_area must be a table.
+function wayzone.outside_wz(target_area, allowed_wz)
+	assert(type(target_area) == "table")
+
+	if target_area.wz_ok == nil then
+		target_area.wz_ok = {} -- table of allowed wayzones
+		target_area.outside = function(self, pos, hash)
+			-- check to see if pos is inside any of the wayzones
+			for _, wz in ipairs(self.wz_ok) do
+				if wz:inside(pos) then
+					return false
+				end
+			end
+			-- not in a wayzone, so the position is outside
+			return true
+		end
+	end
+
+	-- add the wayzones to the list
+	if allowed_wz ~= nil and type(allowed_wz) == "table" then
+		for _, wz in ipairs(allowed_wz) do
+			if wz ~= nil then
+				table.insert(target_area.wz_ok, wz)
+			end
 		end
 	end
 end
