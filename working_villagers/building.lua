@@ -332,6 +332,7 @@ minetest.register_node("working_villages:building_marker", {
 	paramtype2 = "wallmounted",
 	sunlight_propagates = true,
 	is_ground_content = false,
+	use_texture_alpha = "clip",
 	walkable = false,
 	node_box = {
 		type = "wallmounted",

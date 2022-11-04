@@ -39,6 +39,7 @@ minetest.register_node("building_sign:building_marker", {
 	tiles = {"default_sign_wall_wood.png"},
 	inventory_image = "default_sign_wood.png",
 	wield_image = "default_sign_wood.png",
+	use_texture_alpha = "clip",
 	paramtype = "light",
 	paramtype2 = "wallmounted",
 	sunlight_propagates = true,
