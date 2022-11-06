@@ -37,7 +37,8 @@ function wayzone_path.start(start_pos, target_pos, args)
 
 	local self = {}
 
-	minetest.log("action", string.format(" wayzone_path.start "))
+	minetest.log("action", string.format(" wayzone_path.start: %s to %s",
+			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
 
 	self.ss = wayzone_store.get(args)
 	-- other fields that show up later:

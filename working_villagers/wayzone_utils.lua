@@ -131,14 +131,14 @@ end
 
 -- log the content of a table, recurse 1 level
 function wayzone_utils.log_table(name, tab)
-	minetest.log("info", string.format("%s content", name))
+	minetest.log("action", string.format("%s content", name))
 	for k, v in pairs(tab) do
 		if type(v) == 'table' then
 			for k2, v2 in pairs(v) do
-				minetest.log("info", string.format("  | %s.%s = %s", k, k2, tostring(v2)))
+				minetest.log("action", string.format("  | %s.%s = %s", k, k2, tostring(v2)))
 			end
 		else
-			minetest.log("info", string.format("  | %s = %s", k, tostring(v)))
+			minetest.log("action", string.format("  | %s = %s", k, tostring(v)))
 		end
 	end
 end

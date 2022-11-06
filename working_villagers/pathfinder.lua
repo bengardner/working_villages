@@ -167,6 +167,12 @@ local function is_node_water(node)
 end
 pathfinder.is_node_water = is_node_water
 
+local function is_node_door(node)
+	node = resolve_node(node)
+	return string.find(node.name, "doors:") ~= nil
+end
+pathfinder.is_node_door = is_node_door
+
 --[[
 Check to see how many clear nodes are at and above @pos.
 Start checking at @start_height (usually 0 or 1).
@@ -349,6 +355,7 @@ function nodecache:get_at_pos(pos)
 			hash = hash,
 			node = node,
 			water = is_node_water(node),
+			door = is_node_door(node),
 			clear = not is_node_collidable(node),
 			stand = is_node_standable(node),
 			climb = is_node_climbable(node),
@@ -394,6 +401,7 @@ end
 function nodecache.new(pos)
 	return setmetatable({ pos=pos, data={}, dyc={} }, { __index = nodecache })
 end
+pathfinder.nodecache = nodecache
 
 -------------------------------------------------------------------------------
 
@@ -559,7 +567,11 @@ return nil (nothing within range) or the position of the ground.
 --]]
 local function get_neighbor_ground_level(pos, jump_height, fall_height)
 	local tmp_pos = vector.new(pos.x, pos.y, pos.z)
-	local node = minetest.get_node(tmp_pos)
+	local node = minetest.get_node_or_nil(tmp_pos)
+	if node == nil then
+		minetest.load_area(tmp_pos)
+		node = minetest.get_node(tmp_pos)
+	end
 	local height = 0
 	if is_node_collidable(node) then
 		-- upward scan looks for a not solid node
@@ -849,9 +861,6 @@ local function get_neighbors(current_pos, args)
 		if args.start.swim_down and not args.start.climb_down then
 			cost = cost * 5
 		end
-		if args.debug then
-			minetest.log("action", "  ++ down "..minetest.pos_to_string(npos))
-		end
 		table.insert(neighbors, {
 			pos = npos,
 			hash = minetest.hash_node_position(npos),
@@ -924,13 +933,13 @@ end
 Roll up the path from end_hash back to start_index. Since we trace back from the
 end position, the path is reversed.
 ]]
-local function do_collect_path(closedSet, end_hash, start_index)
+local function do_collect_path(posSet, end_hash, start_index)
 	--minetest.log("warning", string.format("collect_path: end=%x start=%x", end_hash, start_index))
 	-- trace backwards to the start node to create the reverse path
 	local reverse_path = {}
 	local cur_hash = end_hash
 	while start_index ~= cur_hash and cur_hash ~= nil do
-		local ref = closedSet[cur_hash]
+		local ref = posSet:get(cur_hash)
 		table.insert(reverse_path, ref.pos)
 		cur_hash = ref.parent
 	end
@@ -960,7 +969,7 @@ local function get_find_path_args(options, entity)
 		want_climb = nil2def(options.want_climb, true),
 		want_swim = nil2def(options.want_swim, true),
 		want_nil = options.want_nil,
-		debug = nil2def(options.debug, false),
+		debug = options.debug or 0,
 		height = options.height or 2,
 		fear_height = options.fear_height or 2,
 		jump_height = options.jump_height or 1,
@@ -1014,11 +1023,10 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 		target_inside = function(self, pos, hash) return hash == target_hash end
 	end
 
-	local openSet = slist_new() -- slist of active "walkers"
-	local closedSet = {}        -- retired "walkers" / visited nodes
+	local posSet = slist_new() -- position storage
 
-	openSet:insert({ hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
-	                 pos = start_pos, hash = start_hash })
+	posSet:insert({ hCost = h_start, gCost = 0, fCost = h_start, parent = nil,
+	                pos = start_pos, hash = start_hash })
 
 	-- return a path and reverse path consisting of a single waypoint set to
 	-- target_pos. This is used for the failure paths.
@@ -1029,29 +1037,26 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 	end
 
 	local function collect_path(end_hash)
-		return do_collect_path(closedSet, end_hash, start_hash)
+		return do_collect_path(posSet, end_hash, start_hash)
 	end
 
 	-- iterate as long as there are active walkers
 	local max_walker_cnt = 1
 	while true do
-		local current_values = openSet:pop_head()
+		local current_values = posSet:pop_head()
 		if current_values == nil then break end
-		max_walker_cnt = math.max(max_walker_cnt, openSet.count)
+		max_walker_cnt = math.max(max_walker_cnt, posSet.count)
 
-		--minetest.log("action", string.format("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d",
+		--minetest.log("action", string.format("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d vCnt=%d",
 		--		minetest.pos_to_string(current_values.pos), current_values.hash,
-		--		current_values.fCost, current_values.gCost, current_values.hCost, openSet.count))
-
-		-- add to the closedSet so we don't revisit this location
-		closedSet[current_values.hash] = current_values
+		--		current_values.fCost, current_values.gCost, current_values.hCost, posSet.count, posSet.total))
 
 		-- Check for a walker in the destination zone.
 		-- Note that we only check the "best" walker.
 		if target_inside(target_area, current_values.pos, current_values.hash) then
-			minetest.log("action", string.format(" walker %s is inside end_pos, hash=%x parent=%x gCost=%d",
-					minetest.pos_to_string(current_values.pos), current_values.hash,
-					current_values.parent or 0, current_values.gCost))
+			--minetest.log("action", string.format(" walker %s is inside end_pos, hash=%x parent=%x gCost=%d",
+			--		minetest.pos_to_string(current_values.pos), current_values.hash,
+			--		current_values.parent or 0, current_values.gCost))
 			return collect_path(current_values.hash)
 		end
 
@@ -1063,23 +1068,19 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 			then
 				local new_gCost = current_values.gCost + neighbor.cost
 				-- if we already visited this node, then we only store if the new cost is less (unlikely)
-				local old_closed = closedSet[neighbor.hash]
-				if old_closed == nil or new_gCost < old_closed.gCost then
-					-- We also want to avoid adding a duplicate (worse) open walker
-					local old_open = openSet:get(neighbor.hash)
-					if old_open == nil or new_gCost < old_open.gCost then
-						local new_hCost = get_estimated_cost(neighbor.pos, target_pos)
-						--minetest.log("action", string.format(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d",
-						--		minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost))
-						openSet:insert({
-							gCost = new_gCost,
-							hCost = new_hCost,
-							fCost = new_gCost + new_hCost,
-							parent = current_values.hash,
-							pos = neighbor.pos,
-							hash = neighbor.hash
-						})
-					end
+				local old_item = posSet:get(neighbor.hash)
+				if old_item == nil or new_gCost < old_item.gCost then
+					local new_hCost = get_estimated_cost(neighbor.pos, target_pos)
+					--minetest.log("action", string.format(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d parent=%x",
+					--		minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost, current_values.hash))
+					posSet:insert({
+						gCost = new_gCost,
+						hCost = new_hCost,
+						fCost = new_gCost + new_hCost,
+						parent = current_values.hash,
+						pos = neighbor.pos,
+						hash = neighbor.hash
+					})
 				end
 			end
 		end
@@ -1089,7 +1090,7 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 		-- Prevent excessive memory/CPU usage by limiting the number of open walkers.
 		-- The caller will travel to the end of the path and then try again.
 		-- This limit may cause failure where success should be possible.
-		if openSet.count > 200 then
+		if posSet.count > 200 then
 			minetest.log("warning", string.format("too many walkers in %s to %s",
 					minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
 			return failed_path()
@@ -1098,8 +1099,8 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 
 	-- We ran out of walkers without hitting the target.
 	-- This happens when there is no possible path to the target.
-	minetest.log("warning", string.format("no path in %s to %s",
-			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
+	minetest.log("warning", string.format("no path in %s to %s count=%d total=%d",
+			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos), posSet.count, posSet.total))
 	minetest.add_particle({
 		pos = target_pos,
 		expirationtime = 15,
@@ -1109,7 +1110,7 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 		size = 5,
 	})
 	local texture = "wayzone_node.png"
-	for hh, ii in pairs(closedSet) do
+	for hh, ii in pairs(posSet.data) do
 		--minetest.log("action", string.format(" visited %s", minetest.pos_to_string(ii.pos)))
 		minetest.add_particle({
 			pos = ii.pos,
@@ -1297,16 +1298,18 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 	local below_pos = vector.new(start_pos.x, start_pos.y - 1, start_pos.z)
 	local below_node = minetest.get_node(below_pos)
 	local in_water = is_node_water(start_node)
+	local in_door = is_node_door(start_node)
 	args.nc = nodecache.new(start_pos)
 
 	if args.debug > 0 then
 		minetest.log("action",
-			string.format("wayzone_flood @ %s %s walk=%s h=%d j=%d f=%d below=%s %s water=%s",
+			string.format("wayzone_flood @ %s %s walk=%s h=%d j=%d f=%d below=%s %s water=%s door=%s",
 				minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
 				args.height, args.jump_height, args.fear_height,
-				minetest.pos_to_string(below_pos), below_node.name, tostring(in_water)))
+				minetest.pos_to_string(below_pos), below_node.name, tostring(in_water), tostring(in_door)))
 	end
 
+	-- NOTE: We don't need sorting, so just use tables
 	local openSet = {}    -- set of active walkers; openSet[hash] = { pos=pos, hash=hash }
 	local visitedSet = {} -- retired "walkers"; visitedSet[hash] = true
 	local exitSet = {}    -- outside area or drop by more that jump_height; exitSet[hash] = true
@@ -1337,15 +1340,22 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 			-- skip if already visited or queued
 			if visitedSet[n.hash] == nil and openSet[n.hash] == nil then
 				local ii = args.nc:get_at_pos(n.pos)
-				if args.debug > 1 then
-					minetest.log("action",
-						string.format("   n %s %x w=%s/%s",
-							minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water)))
-				end
 				local dy = math.abs(n.pos.y - item.pos.y)
-				if not area:inside(n.pos, n.hash) or dy > y_lim or ii.water ~= in_water then
+				if not area:inside(n.pos, n.hash) or dy > y_lim or ii.water ~= in_water or ii.door ~= in_door then
 					exitSet[n.hash] = true
+					if args.debug > 1 then
+						minetest.log("action",
+							string.format("   n %s %x w=%s/%s d=%s/%s EXIT",
+								minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water),
+								tostring(ii.door), tostring(in_door)))
+					end
 				else
+					if args.debug > 1 then
+						minetest.log("action",
+							string.format("   n %s %x w=%s/%s d=%s/%s VISITED",
+								minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water),
+								tostring(ii.door), tostring(in_door)))
+					end
 					visitedSet[n.hash] = true
 					exitSet[n.hash] = nil -- might have been unreachable via another neighbor
 					add_open(n)
@@ -1429,7 +1439,7 @@ local function node_check(pos)
 	if pathfinder.can_stand_at(pos, 2) then
 		minetest.log("action", "  can_stand_at = true")
 	end
-	args.debug = true
+	args.debug = 2
 
 	for _, n in pairs(get_neighbors(pos, args)) do
 		minetest.log("action", string.format("  n %s", minetest.pos_to_string(n.pos)))

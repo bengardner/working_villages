@@ -8,6 +8,73 @@ local log = working_villages.require("log")
 local pathfinder = working_villages.require("pathfinder")
 local waypoints = working_villages.require("waypoint_zones")
 local wayzone_path = working_villages.require("wayzone_pathfinder")
+local wayzone_store = working_villages.require("wayzone_store")
+
+local function co_path(pos1, pos2)
+	local wzp = wayzone_path.start(pos1, pos2)
+
+	local path = {}
+	local cur_pos = pos1
+	while cur_pos ~= nil do
+		table.insert(path, cur_pos)
+		cur_pos = wzp:next_goal(cur_pos)
+	end
+	minetest.log("action", string.format("co return path %d", #path))
+	return path
+end
+
+local function do_path_find_with_timer(player, pos1, pos2)
+	minetest.log("action",
+		string.format("Path from %s to %s",
+			minetest.pos_to_string(pos1),
+			minetest.pos_to_string(pos2)))
+
+	local str = S("Path from @1 to @2:",
+		minetest.pos_to_string(pos1),
+		minetest.pos_to_string(pos2))
+	minetest.chat_send_player(player:get_player_name(), str)
+
+	local time_start = minetest.get_us_time()
+
+	if use_coroutine ~= nil then
+		--local wzp = waypoints.path_start(pos1, pos2)
+		local co = coroutine.create(co_path)
+		--minetest.log("action", "starting...")
+		local path
+		local ret, val = coroutine.resume(co, pos1, pos2)
+		--minetest.log("action", string.format("  -> %s %s", tostring(ret), tostring(val)))
+		if ret and val ~= nil then
+			path = val
+		end
+		while coroutine.status(co) ~= "dead" do
+			--minetest.log("action", "resuming...")
+			ret, val = coroutine.resume(co)
+			if ret and val ~= nil then
+				path = val
+			end
+			--minetest.log("action", string.format("  -> %s %s", tostring(ret), tostring(val)))
+		end
+	else
+		path = co_path(pos1, pos2)
+	end
+	if path == nil then
+		minetest.log("action", "done... no path")
+		return
+	end
+	--minetest.log("action", "done..." .. tostring(#path))
+
+	for idx, pos in ipairs(path) do
+		minetest.log("action", string.format(" [%d] %s", idx, minetest.pos_to_string(pos)))
+	end
+
+	local time_end = minetest.get_us_time()
+	local time_diff = time_end - time_start
+
+	minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
+	minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
+
+	pathfinder.show_particles(path)
+end
 
 local function find_path_for_player(player, itemstack, pos1)
 	local meta = itemstack:get_meta()
@@ -56,50 +123,13 @@ local function find_path_for_player2(player, itemstack, pos1)
 	if not (pos2.x and pos2.y and pos2.z) then
 		return
 	end
-	local pos1 = pathfinder.get_ground_level(pos1)
-	local pos2 = pathfinder.get_ground_level(pos2)
-	if pos1 == nil or pos2 == nil then
-		minetest.log("action", string.format("pathfinder tool: invalid positions s=%s e=%s", tostring(pos1), tostring(pos2)))
+	local gpos1 = pathfinder.get_ground_level(pos1)
+	local gpos2 = pathfinder.get_ground_level(pos2)
+	if gpos1 == nil or gpos2 == nil then
+		minetest.log("action", string.format("pathfinder tool: invalid positions s=%s e=%s", tostring(gpos1), tostring(gpos2)))
 		return
 	end
-	minetest.log("action",
-		string.format("Path from %s to %s",
-			minetest.pos_to_string(pos1),
-			minetest.pos_to_string(pos2)))
-
-	local str = S("Path from @1 to @2:",
-		minetest.pos_to_string(pos1),
-		minetest.pos_to_string(pos2))
-	minetest.chat_send_player(player:get_player_name(), str)
-
-	local time_start = minetest.get_us_time()
-
-	--local wzp = waypoints.path_start(pos1, pos2)
-	local wzp = wayzone_path.start(pos1, pos2)
-
-	local time_end = minetest.get_us_time()
-	local time_diff = time_end - time_start
-
-	if not wzp then
-		minetest.chat_send_player(player:get_player_name(), S("No path!"))
-		minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
-		return
-	end
-
-	local path = {}
-	local cur_pos = pos1
-	while cur_pos ~= nil do
-		table.insert(path, cur_pos)
-		cur_pos = wzp:next_goal(cur_pos)
-	end
-
-	time_end = minetest.get_us_time()
-	time_diff = time_end - time_start
-
-	minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
-	minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
-
-	pathfinder.show_particles(path)
+	do_path_find_with_timer(player, pos1, pos2)
 end
 
 local function set_destination(itemstack, user, pointed_thing)
@@ -122,6 +152,9 @@ end
 
 local function find_path_or_set_algorithm(itemstack, user, pointed_thing)
 	if not (user and user:is_player()) then
+		return
+	end
+	if pointed_thing.above == nil then
 		return
 	end
 	local ctrl = user:get_player_control()
@@ -150,4 +183,5 @@ minetest.register_tool("working_villages:testpathfinder", {
 	on_use = find_path_or_set_algorithm,
 	on_secondary_use = set_destination,
 	on_place = set_destination,
+	range = 16,
 })

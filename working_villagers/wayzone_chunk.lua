@@ -67,8 +67,11 @@ function wayzone_chunk.new(pos, old_chunk)
 	self.pos = wayzone.normalize_pos(pos)
 	self.hash = minetest.hash_node_position(self.pos)
 	if old_chunk ~= nil then
-		self.generation = old_chunk.generation
-		self.expire_clock = old_chunk.expire_clock
+		self.generation = old_chunk.generation + 1
+		-- keep expire_clock if it hasn't expired (water spread)
+		if old_chunk.expire_clock ~= nil and old_chunk.expire_clock > os.clock() then
+			self.expire_clock = old_chunk.expire_clock
+		end
 		self.use_clock = old_chunk.use_clock
 		self.use_count = old_chunk.use_count
 	else
@@ -117,11 +120,13 @@ function wayzone_chunk:mark_used()
 end
 
 function wayzone_chunk:mark_dirty(future_sec)
-	if future_sec == nil or future_sec <= 0 then
+	future_sec = future_sec or 0
+	if future_sec <= 0 then
 		self.expire_clock = 0
 	else
 		self.expire_clock = math.min(os.clock() + future_sec, self.expire_clock)
 	end
+	--minetest.log("warning", string.format("mark_dirty %x %s", self.hash, minetest.pos_to_string(self.pos), future_sec))
 end
 
 function wayzone_chunk:is_dirty()

@@ -153,7 +153,8 @@ local S = default.get_translator
 
 local wayzone = {}
 
-local chunk_size = 8
+--local chunk_size = 16 -- can be 8 or 16 for testing. 8 is looking better.
+local chunk_size = 8 -- can be 8 or 16 for testing. 8 is looking better.
 local chunk_bytes = (chunk_size * chunk_size * chunk_size / 8)
 
 -- this should be read-only
@@ -171,23 +172,40 @@ local mask_to_bit = {
 	[0x80] = 7,
 }
 
--- change a local position to a hash (12 bits, 0-15) (for the exit nodes)
--- y is in the lsb so that we can reduce y precision with a rshift.
-local function lpos_to_hash(lpos)
-	-- return bit.lshift(lpos.x, 8) + bit.lshift(lpos.z, 4) + lpos.y -- for 16 chunk size
-	return bit.lshift(lpos.x, 6) + bit.lshift(lpos.z, 3) + lpos.y -- for 8 chunk size
-end
+-- change a local position to a hash for the exit nodes
+-- The hash is either 12 bits for chunk_size=16 and 9 bits for chunk_size=8.
+-- NOTE: y is in the lsb so that we can reduce y precision with a rshift as a
+-- future enhancement.
 
--- change a hash to a local position (for the exit nodes)
-local function hash_to_lpos(hash)
-	-- for 16 chunk size
-	--return vector.new(bit.band(bit.rshift(hash, 8), 0x0f),
-	--                  bit.band(hash, 0x0f),
-	--                  bit.band(bit.rshift(hash, 4), 0x0f))
-	-- for 8 chunk size
+-- lpos to hash functions for 8-node chunk size
+local function lpos_to_hash_8(lpos)
+	return bit.lshift(lpos.x, 6) + bit.lshift(lpos.z, 3) + lpos.y
+end
+local function hash_to_lpos_8(hash)
 	return vector.new(bit.band(bit.rshift(hash, 6), 0x07),
 	                  bit.band(hash, 0x07),
 	                  bit.band(bit.rshift(hash, 3), 0x07))
+end
+
+-- lpos to hash functions for 16-node chunk size
+local function lpos_to_hash_16(lpos)
+	return bit.lshift(lpos.x, 8) + bit.lshift(lpos.z, 4) + lpos.y
+end
+local function hash_to_lpos_16(hash)
+	return vector.new(bit.band(bit.rshift(hash, 8), 0x0f),
+	                  bit.band(hash, 0x0f),
+	                  bit.band(bit.rshift(hash, 4), 0x0f))
+end
+
+-- pick the right hash based on the chunk size
+local lpos_to_hash
+local hash_to_lpos
+if chunk_size == 8 then
+	lpos_to_hash = lpos_to_hash_8
+	hash_to_lpos = hash_to_lpos_8
+else
+	lpos_to_hash = lpos_to_hash_16
+	hash_to_lpos = hash_to_lpos_16
 end
 
 --[[
@@ -219,7 +237,6 @@ Reverses bytemask_to_lpos()
 NOTE: byte_index is 1-based
 ]]
 local function lpos_to_bytemask(lpos)
-	-- REVISIT: We could rshift to reduce y resolution, but do full res for now
 	local phash = lpos_to_hash(lpos)
 	return bitidx_to_bytemask(phash)
 end
@@ -236,64 +253,110 @@ local function in_range(val)
 	return val >= 0 and val < chunk_size
 end
 
--- Seven "adjacent" chunks (includes self)
+--[[
+15 "adjacent" chunks (includes self as [1])
+Note that we have to include the node above and below the side nodes to allow
+for jumping up or dropping down while moving outside the chunk.
+This is roughly ordered from most likely to least likely to save a bit of memory.
+]]
 wayzone.chunk_adjacent = {
-	[1] = vector.new(-chunk_size,   0,   0),
-	[2] = vector.new( chunk_size,   0,   0),
-	[3] = vector.new(  0, -chunk_size,   0),
-	[4] = vector.new(  0,  chunk_size,   0),
-	[5] = vector.new(  0,   0, -chunk_size),
-	[6] = vector.new(  0,   0,  chunk_size),
-	[7] = vector.new(  0,   0,   0), -- self/same chunk
+	[1]  = vector.new(0, 0, 0),                      -- self/same chunk
+	[2]  = vector.new(-chunk_size, 0, 0),            -- -X
+	[3]  = vector.new(chunk_size, 0, 0),             -- +X
+	[4]  = vector.new(0, 0, -chunk_size),            -- -Z
+	[5]  = vector.new(0, 0, chunk_size),             -- +Z
+	[6]  = vector.new(0, -chunk_size, 0),            -- -Y
+	[7]  = vector.new(0, chunk_size, 0),             -- +Y
+	[8]  = vector.new(-chunk_size, -chunk_size, 0),  -- -X, -Y
+	[9]  = vector.new(-chunk_size, chunk_size,  0),  -- -X, +Y
+	[10] = vector.new(chunk_size, -chunk_size, 0),   -- +X, -Y
+	[11] = vector.new(chunk_size, chunk_size,  0),   -- +X, +Y
+	[12] = vector.new(0, -chunk_size, -chunk_size),  -- -Z, -Y
+	[13] = vector.new(0, chunk_size, -chunk_size),   -- -Z, +Y
+	[14] = vector.new(0, -chunk_size, chunk_size),   -- +Z, -Y
+	[15] = vector.new(0, chunk_size, chunk_size),    -- +Z, +Y
+}
+
+--[[
+Lookup table for finding the index for the lpos.
+The comparison of each axis (-1,0,1) is turned in a 3-bit field.
+Note: 3 is a 2-bit "-1"
+b0:1 = 0x03=-X, 0x00=inside, 0x01=+X
+b2:3 = 0x0c=-Z, 0x00=inside, 0x04=+Z
+b4:5 = 0x30=-Y, 0x00=inside, 0x10=+Y
+]]
+local chunk_adjacent_lookup = {
+	[0x00] = 1,
+	[0x30] = 6,
+	[0x10] = 7,
+	[0x03] = 2,
+	[0x33] = 8,
+	[0x13] = 9,
+	[0x01] = 3,
+	[0x31] = 10,
+	[0x11] = 11,
+	[0x0c] = 4,
+	[0x3c] = 12,
+	[0x1c] = 13,
+	[0x04] = 5,
+	[0x34] = 14,
+	[0x14] = 15,
 }
 
 -- find the index (into chunk_adjacent) for the "outside" exit set
 -- returns the index into chunk_adjacent, lpos in the adjacent chunk
 local function exit_index(self, lpos)
-	--minetest.log("action", string.format("wayzone: exit %s %s",
-	--	minetest.pos_to_string(lpos),
-	--	minetest.pos_to_string(vector.add(lpos, self.cpos))))
-	if in_range(lpos.x) then
-		if in_range(lpos.y) then
-			-- x,y in range
-			if in_range(lpos.z) then
-				-- x,y,z in range
-				return 7, lpos -- inside
-			elseif lpos.z < 0 then
-				return 5, vector.new(lpos.x, lpos.y, lpos.z+chunk_size) -- at -z
-			else
-				return 6, vector.new(lpos.x, lpos.y, lpos.z-chunk_size) -- at +z
-			end
-		elseif in_range(lpos.z) then
-			-- x,z in range
-			if lpos.y < 0 then
-				return 3, vector.new(lpos.x, lpos.y+chunk_size, lpos.z) -- at -y
-			else
-				return 4, vector.new(lpos.x, lpos.y-chunk_size, lpos.z) -- at +y
-			end
-		end
-	elseif in_range(lpos.y) and in_range(lpos.z) then
-		-- y,z in range, x not
-		if lpos.x < 0 then
-			return 1, vector.new(lpos.x+chunk_size, lpos.y, lpos.z) -- at -x
-		else
-			return 2, vector.new(lpos.x-chunk_size, lpos.y, lpos.z) -- at +x
+	local key = 0
+
+	if lpos.x < 0 then
+		key = key + 0x03
+	elseif lpos.x >= chunk_size then
+		key = key + 0x01
+	end
+
+	if lpos.z < 0 then
+		key = key + 0x0c
+	elseif lpos.z >= chunk_size then
+		key = key + 0x04
+	end
+
+	if lpos.y < 0 then
+		key = key + 0x30
+	elseif lpos.y >= chunk_size then
+		key = key + 0x10
+	end
+
+	local index = chunk_adjacent_lookup[key]
+	if index ~= nil then
+		local avec = wayzone.chunk_adjacent[index]
+		if avec ~= nil then
+			return index, vector.new(lpos.x - avec.x, lpos.y - avec.y, lpos.z - avec.z)
 		end
 	end
-	return nil -- corner?
+	return nil
 end
 
--- convert a global position to a local position but subtracting off self.cpos
-function wayzone:pos_to_local(pos)
+-- convert a global position to a local position by subtracting off self.cpos
+function wayzone:pos_to_lpos(pos)
 	return vector.subtract(vector.floor(pos), self.cpos)
+end
+
+-- convert a global position to a local position by adding self.cpos
+function wayzone:lpos_to_pos(lpos)
+	return vector.new(self.cpos.x + lpos.x, self.cpos.y + lpos.y, self.cpos.z + lpos.z)
 end
 
 -- Insert an exit position in the correct table.
 function wayzone:insert_exit(pos)
-	local lpos = self:pos_to_local(pos)
+	local lpos = self:pos_to_lpos(pos)
 	local x_idx, x_lpos = exit_index(self, lpos)
-	if x_idx == nil then return end
-	-- we need to put it in the correct exited table to reduce iteration time
+	if x_idx == nil then
+		minetest.log("warning", string.format("no exit idx lpos=%s pos=%s", minetest.pos_to_string(lpos), minetest.pos_to_string(pos)))
+		return
+	end
+	-- We need to put it in the correct exited table to reduce iteration time.
+	-- This also indicates that the chunk to that side is important and we can
+	-- link to it.
 	local xmap = self.exited[x_idx]
 	if xmap == nil then
 		xmap = {}
@@ -308,7 +371,7 @@ function wayzone:insert(pos)
 	assert(type(self.visited) == "table")
 
 	-- the position has to be inside the chunk
-	local lpos = self:pos_to_local(pos)
+	local lpos = self:pos_to_lpos(pos)
 	assert(in_range(lpos.x) and in_range(lpos.y) and in_range(lpos.z))
 
 	-- update minp/maxp
@@ -348,6 +411,7 @@ local function wayzone_calc_center(self)
 	local best = nil
 	local best_dist = 0
 	for pos in self:iter_visited() do
+		-- REVISIT: use distance squared to save a sqrt()?
 		local dist = vector.distance(pos, vave)
 		if best == nil or dist < best_dist then
 			best = pos
@@ -358,9 +422,15 @@ local function wayzone_calc_center(self)
 	self.visited_count = count
 end
 
--- Flatten the byte array into a string
--- The array uses 40 B (1) to 54 KB (1365), with a typical value of ~10 KB (256).
--- The string uses ~chunk_bytes bytes always.
+--[[
+Flatten the 'visited' bitarray to a string, which uses at most chunk_bytes.
+If CS=8, chunk_bytes is 64 bytes (8x8x8/8).
+If CS=16, chunk_bytes is 512 bytes (16x16X16/8).
+
+We could save some memory by using the bounding box and have the bitarray relative
+to that. If a wayzone had one node, it would take 1 byte for the visited bitarray.
+Wayzones that were flat (dy=1) would use even less.
+]]
 function wayzone:finish(in_water)
 	-- pack the visited table into a fixed-length string.
 	assert(type(self.visited) == "table")
@@ -375,13 +445,16 @@ function wayzone:finish(in_water)
 	-- REVISIT: use a bitmap for X,Z,+Y sides (8 bytes or u64)
 	local packed_exited = {}
 	for k, v in pairs(self.exited) do
+		--minetest.log("action", string.format("   idx=%d", k))
 		assert(type(v) == "table")
 		local xxx = {}
 		for hash, _ in pairs(v) do
-			-- pack MSB-first in a string
+			--minetest.log("action", string.format("   exit %s", hash))
+			-- pack 16-bit hash MSB-first in a string
 			table.insert(xxx, string.char(bit.rshift(hash, 8), bit.band(hash, 0xff)))
 		end
 		packed_exited[k] = table.concat(xxx, '')
+		--minetest.log("action", string.format("packed %d=>%d", k, #packed_exited[k]))
 	end
 	self.exited = packed_exited
 
@@ -427,7 +500,7 @@ function wayzone:inside(pos)
 	end
 
 	-- check the visited array/string
-	return self:inside_local(self:pos_to_local(pos))
+	return self:inside_local(self:pos_to_lpos(pos))
 end
 
 --[[
@@ -661,17 +734,20 @@ end
 local function wayzone_link_filter(link_tab, chash)
 	-- do a scan to see if we need to change anything
 	local found = false
-	for _, ni in ipairs(link_tab) do
+	for _, ni in pairs(link_tab) do
+		--minetest.log("action", string.format("wayzone_link_filter: check %s %x vs %x", ni.key, ni.chash, chash))
 		if ni.chash == chash then
 			found = true
+			--minetest.log("action", string.format("wayzone_link_filter: found %x", chash))
 			break
 		end
 	end
 	if found then
 		-- build a list of all we are keeping and replace self.link_out
 		local link_new = {}
-		for _, ni in ipairs(link_tab) do
-			if ni.chash ~= to_chash then
+		for _, ni in pairs(link_tab) do
+			if ni.chash ~= chash then
+				--minetest.log("action", string.format("wayzone_link_filter: keep %s", ni.key))
 				link_new[ni.key] = ni
 			end
 		end
@@ -682,6 +758,7 @@ end
 
 -- delete all links to wayzones in the chunk described by other_chash
 function wayzone:link_del(other_chash)
+	--minetest.log("action", string.format("wayzone:link_del self=%s other=%x", self.key, other_chash))
 	self.link_to = wayzone_link_filter(self.link_to, other_chash)
 	self.link_from = wayzone_link_filter(self.link_from, other_chash)
 end
