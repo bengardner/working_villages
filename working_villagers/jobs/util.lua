@@ -49,7 +49,7 @@ end
 -- Checks to see if a MOB can stand in the location.
 function func.clear_pos(pos)
 	local node=minetest.get_node(pos)
-	local above_node=minetest.get_node({x=pos.x,y=pos.y+1,z=pos.z})
+	local above_node=minetest.get_node(vector.new(pos.x,pos.y+1,pos.z))
 	return not(pathfinder.is_node_collidable(node) or pathfinder.is_node_collidable(above_node))
 end
 
@@ -64,7 +64,7 @@ function func.find_adjacent_clear(pos)
 	if found~=false then
 		return found
 	end
-	found = vector.add(pos,{x=0,y=-2,z=0})
+	found = vector.new(pos.x, pos.y-2, pos.z)
 	if func.clear_pos(found) then
 		return found
 	end
@@ -76,7 +76,7 @@ local find_adjacent_clear = func.find_adjacent_clear
 
 -- search in an expanding box around pos in the XZ plane
 -- first hit would be closest
-local function search_surrounding(pos, pred, searching_range)
+local function search_surrounding(pos, pred, searching_range, caller_state)
 	pos = vector.round(pos)
 	local max_xz = math.max(searching_range.x, searching_range.z)
 	local mod_y
@@ -96,7 +96,7 @@ local function search_surrounding(pos, pred, searching_range)
 		if ret.pos ~= nil then return end
 		for j = mod_y - searching_range.y, searching_range.y do
 			local p = vector.add({x = dx, y = j, z = dz}, pos)
-			if pred(p) and find_adjacent_clear(p)~=false then
+			if pred(p, caller_state) and find_adjacent_clear(p)~=false then
 				ret.pos = p
 				return
 			end
@@ -143,12 +143,12 @@ func.search_surrounding = search_surrounding
 
 -- defines the 6 adjacent positions
 local adjacent_pos = {
-	{x=0,y=1,z=0},
-	{x=0,y=-1,z=0},
-	{x=1,y=0,z=0},
-	{x=-1,y=0,z=0},
-	{x=0,y=0,z=1},
-	{x=0,y=0,z=-1},
+	vector.new( 0, 1, 0),
+	vector.new( 0,-1, 0),
+	vector.new( 1, 0, 0),
+	vector.new(-1, 0, 0),
+	vector.new( 0, 0, 1),
+	vector.new( 0, 0,-1),
 }
 
 -- Check the position and the six adjacent positions

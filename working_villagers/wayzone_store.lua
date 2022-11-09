@@ -52,8 +52,24 @@ wayzone_store.stores = {}
 
 -------------------------------------------------------------------------------
 
--- Create a new wayzone_store with the given parameters. If one already exists,
--- then that is reused.
+--[[
+Create a new wayzone_store with the given parameters. If one already exists,
+then that is reused.
+
+Future params:
+ - can_swim:  false = never create water wayzones (maybe save some memory)
+           true/nil = create water wayzones
+            RESIVIT: can_swim seems pointless, as we can forbid entering water
+                     at the nav mesh layer.
+ - can_climb: false = do not allow climb moves
+               true = include climb moves
+             "maybe"= climb nodes are a separate wayzone -- may cause wayzone overlap
+ - can_door:  false = doors are treated as non-collidable and can be walked through
+           true/nil = doors get their own wayzone. the path_find() will determine
+                      if the MOB has the ability to traverse the wayzone.
+ - walk_leaves: true = allow walking on leaves, leaves in a separate wayzone
+           false/nil = do not allow walking on leaves
+]]
 function wayzone_store.get(args)
 	-- args: height, jump_height, fear_height, can_climb
 	args = args or {}
@@ -65,21 +81,18 @@ function wayzone_store.get(args)
 		debug = 1
 		}
 
-	for _, ss in ipairs(wayzone_store.stores) do
-		if (ss.height == self.height and
-			ss.jump_height == self.jump_height and
-			ss.fear_height == self.fear_height and
-			ss.can_climb == self.can_climb)
-		then
-			--minetest.log("warning", "wayzone_store: reusing entry")
-			return ss
-		end
+	self.key = string.format("h=%d;j=%d;f=%d;c=%s",
+		self.height, self.jump_height, self.fear_height, tostring(self.can_climb))
+
+	local ss = wayzone_store.stores[self.key]
+	if ss ~= nil then
+		return ss
 	end
 
 	self.chunks = {}
 	self = setmetatable(self, { __index = wayzone_store })
-	table.insert(wayzone_store.stores, self)
-	minetest.log("warning", string.format("wayzone_store: new entry, now have %d", #wayzone_store.stores))
+	wayzone_store.stores[self.key] = self
+	minetest.log("warning", string.format("wayzone_store: created %s", self.key))
 	return self
 end
 
@@ -250,12 +263,12 @@ local function process_chunk(self, chunk_hash)
 			local wz = wzc:new_wayzone()
 			for h, _ in pairs(visitHash) do
 				local pp = minetest.get_position_from_hash(h)
-				minetest.log("action", string.format(" visited %12x %s", h, minetest.pos_to_string(pp)))
+				--minetest.log("action", string.format(" visited %12x %s", h, minetest.pos_to_string(pp)))
 				wz:insert(pp)
 			end
 			for h, _ in pairs(exitHash) do
 				local pp = minetest.get_position_from_hash(h)
-				minetest.log("action", string.format(" exited  %12x %s", h, minetest.pos_to_string(pp)))
+				--minetest.log("action", string.format(" exited  %12x %s", h, minetest.pos_to_string(pp)))
 				wz:insert_exit(pp)
 			end
 			wz:finish()
@@ -413,10 +426,10 @@ returns {
 	wz = the wayzone that contains pos (nil if no match)
 	}
 ]]
-function wayzone_store:get_pos_info(pos)
+function wayzone_store:get_pos_info(pos, where)
 	assert(pos ~= nil)
 	local info = {}
-	info.pos = vector.floor(pos) -- rounded to node coordinates
+	info.pos = vector.round(pos) -- rounded to node coordinates
 	info.hash = minetest.hash_node_position(info.pos)
 	local cpos = wayzone.normalize_pos(info.pos)
 	local chash = minetest.hash_node_position(cpos)
@@ -430,19 +443,23 @@ function wayzone_store:get_pos_info(pos)
 	the data is obsolete and we should re-processing the chunk data.
 	]]
 	if info.wz == nil then
-		if pathfinder.can_stand_at(pos, 2) then
+		if pathfinder.can_stand_at(info.pos, 2) then
 			-- should be able to stand at pos, so wayzone data is old
 			-- FIXME: warn for now. this should be rare, but noteworthy
 			minetest.log("warning",
-				string.format("waypoint: reprocessing %x %s",
+				string.format("waypoint[%s]: reprocessing %x %s", where or "??",
 					info.wzc.hash, minetest.pos_to_string(info.wzc.pos)))
 			info.wzc:mark_dirty()
 			info.wzc = self:chunk_get_by_hash(info.wzc.hash)
 			info.wz = info.wzc:get_wayzone_for_pos(info.pos)
 		else
 			-- pos is not a valid standing position
-			local node = minetest.get_node(pos)
-			minetest.log("warning", string.format("waypoint: cannot stand %s %s", minetest.pos_to_string(pos), node.name))
+			local node = minetest.get_node(info.pos)
+			local pos_below = vector.new(info.pos.x,info.pos.y-1,info.pos.z)
+			local node_below = minetest.get_node(pos_below)
+			minetest.log("warning", string.format("waypoint[%s]: cannot stand %s [%s] below %s [%s]", where or "??",
+					minetest.pos_to_string(info.pos), node.name,
+					minetest.pos_to_string(pos_below), node_below.name))
 		end
 	end
 	return info
@@ -480,8 +497,8 @@ FIXME: We need to set some bounds around the search or this could scan a lot
 ]]
 function wayzone_store:find_path(start_pos, target_pos)
 	-- Grab the wayzone for start_pos and end_pos
-	local si = self:get_pos_info(start_pos)
-	local di = self:get_pos_info(target_pos)
+	local si = self:get_pos_info(start_pos, "find_path.si")
+	local di = self:get_pos_info(target_pos, "find_path.di")
 
 	-- Bail if there isn't a wayzone for both the start and target
 	if si.wz == nil or di.wz == nil then
@@ -489,13 +506,13 @@ function wayzone_store:find_path(start_pos, target_pos)
 	end
 
 	minetest.log("action", string.format("start: %s %s end: %s %s",
-			minetest.pos_to_string(start_pos), si.wz.key,
-			minetest.pos_to_string(target_pos), di.wz.key))
+			minetest.pos_to_string(si.pos), si.wz.key,
+			minetest.pos_to_string(di.pos), di.wz.key))
 
 	-- If both are in the same wayzone, we return only that wayzone.
 	if si.wz.key == di.wz.key then
-		minetest.log("action", string.format("same wayzone for %s and %s",
-				minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
+		--minetest.log("action", string.format("same wayzone for %s and %s",
+		--		minetest.pos_to_string(si.pos), minetest.pos_to_string(di.pos)))
 		return { si.wz }
 	end
 
@@ -504,7 +521,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 		-- make sure link info is up-to-date (will not reprocess chunks)
 		wayzones_refresh_links(si.wzc, di.wzc)
 		if si.wz:link_test_to(di.wz) then
-			minetest.log("warning", string.format(" ++ direct link detected"))
+			-- minetest.log("warning", string.format(" ++ direct link detected"))
 			return { si.wz, di.wz }
 		end
 	end
@@ -559,8 +576,8 @@ function wayzone_store:find_path(start_pos, target_pos)
 	-- reverse sequence
 	-- append ref to end
 	local function dual_rollup(ref_key)
-		minetest.log("action", string.format("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key))
-		log_all()
+		--minetest.log("action", string.format("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key))
+		--log_all()
 		--minetest.log("action", string.format("  dual_rollup - start"))
 		-- roll up the path and store in wzp.wzpath
 		local rev_wzpath = {}
@@ -568,7 +585,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 		-- check parent_key because we don't want to add the start wayzone, as that is added below
 		-- FIXME: the rev_wzpath/wzpath len checks are to protect against coding error - remove after testing
 		while cur ~= nil and cur.parent_key ~= nil and #rev_wzpath < 200 do
-			minetest.log("action", string.format("  fwd %s p=%s", cur.sl_key, cur.parent_key))
+			--minetest.log("action", string.format("  fwd %s p=%s", cur.sl_key, cur.parent_key))
 			table.insert(rev_wzpath, self:wayzone_get_by_key(cur.sl_key))
 			cur = fwd.posSet:get(cur.parent_key)
 		end
@@ -579,7 +596,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 		-- trace forward through rev.closeSet, adding to wzpath
 		local cur = rev.posSet:get(ref_key)
 		while cur ~= nil and cur.parent_key ~= nil do -- and cur.parent_key ~= di.wz.key and #wzpath < 200 do
-			minetest.log("action", string.format("  rev %s p=%s", cur.sl_key, cur.parent_key))
+			--minetest.log("action", string.format("  rev %s p=%s", cur.sl_key, cur.parent_key))
 			table.insert(wzpath, self:wayzone_get_by_key(cur.parent_key)) -- adding parent, not cur.key
 			cur = rev.posSet:get(cur.parent_key)
 		end
@@ -650,7 +667,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 			-- Add an entry for each link from this wayzone
 			for _, link in pairs(link_tab) do
 				local link_wzc = adj_hash[link.chash]
-				minetest.log("action", string.format("   + links %s => %s", xx_wz.key, link.key))
+				minetest.log("action", string.format("   + neighbor link %s => %s", xx_wz.key, link.key))
 				if link_wzc == nil then
 					-- TODO: this is a link to a non-adjacent chunk. We need to check the gen of each
 					--       chunk in the chain and make sure they are current.
@@ -659,7 +676,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 					-- don't store a worse walker if we already visited this wayzone
 					local old_item = fr.posSet:get(link.key)
 					if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
-						minetest.log("action", string.format("   + adding link %s", link.key))
+						--minetest.log("action", string.format("   + adding link %s", link.key))
 						add_open(fr, {
 							parent_key=xx.cur.key,
 							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key },
@@ -675,8 +692,8 @@ function wayzone_store:find_path(start_pos, target_pos)
 		do_neighbors(rev, rr, false)
 	end
 	minetest.log("warning", string.format("wayzone path fail: %s -> %s, steps=%d",
-			minetest.pos_to_string(start_pos),
-			minetest.pos_to_string(target_pos), steps))
+			minetest.pos_to_string(si.pos),
+			minetest.pos_to_string(di.pos), steps))
 	log_all()
 	return nil
 end

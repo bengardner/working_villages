@@ -571,3 +571,55 @@ Solution:
 
 
 Or, we could just not care. The paths will be good enough.
+
+
+
+---
+
+## Packing visited wayzone data
+
+This should be left for when it is all working...
+
+But I can't help myself.
+
+Use an octree to represent the visited nodes.
+
+Assuming CS=16
+byte 1: represents whether each of the eight 4x4x4 sections have any nodes.
+For each bit that is 1, there is a byte for the 2x2x2 subsections.
+For each of the 2x2x2 subsections, there is a byte that the 8 nodes.
+[1] [8] * [1 + 8] = 
+
+Top
+  + 8x8x8 (*8) 1 byte each
+    +- 4x4x4 (*8) 1 byte each
+      + 2x2x2 1 byte each
+Worse-case size is 585 for CS=16 or 73 for CS=8.
+
+Second pass:
+
+byte 1 = default for each of the 8 sections (0=default absent, 1=default present)
+byte 2 = bit flag for the 8 nodes indicating that a subdivision is present
+byte 3:4 = 2 bytes for the first subsection
+byte 5:6 = 2 bytes for the second subsection
+byte 7:8 = 2 bytes for the second subsection
+ 9.10
+ 11.12
+ 13.14.
+ 15.16
+ 17"18 = 2 bytes for the last subsection
+Data starts for the subsections
+ - same 2 bytes for each subnode
+
+[TAG]  - 8x8x8 sections
+0-8 [TAG] for 4x4x4 sections
+0-8 [DATA] for 2x2x2 sections
+
+sub-tags = 0 to 8 in length
+
+
+
+8x2x4
+
+0,0,0 => 0
+7,1,3 => 

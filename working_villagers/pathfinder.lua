@@ -392,10 +392,10 @@ function nodecache:get_dy(dy)
 end
 
 function nodecache:done(dy)
-	minetest.log("action",
-		string.format("nodecache: dy hit=%d miss=%d, pos hit=%d miss=%d",
-			(self.dy_hit or 0), (self.dy_miss or 0),
-			(self.pos_hit or 0), (self.pos_miss or 0)))
+	--minetest.log("info",
+	--	string.format("nodecache: dy hit=%d miss=%d, pos hit=%d miss=%d",
+	--		(self.dy_hit or 0), (self.dy_miss or 0),
+	--		(self.pos_hit or 0), (self.pos_miss or 0)))
 end
 
 function nodecache.new(pos)
@@ -566,6 +566,8 @@ Climbable nodes count as ground when below.
 return nil (nothing within range) or the position of the ground.
 --]]
 local function get_neighbor_ground_level(pos, jump_height, fall_height)
+	jump_height = jump_height or 1
+	fall_height = fall_height or 2
 	local tmp_pos = vector.new(pos.x, pos.y, pos.z)
 	local node = minetest.get_node_or_nil(tmp_pos)
 	if node == nil then
@@ -600,6 +602,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 		return tmp_pos
 	end
 end
+pathfinder.get_neighbor_ground_level = get_neighbor_ground_level
 
 --[[
 This is called to find the 'stand level' for a neighboring node.
@@ -1003,6 +1006,8 @@ of the area that we can explore.
 returns an array of waypoint positions and a reversed array (why??)
 --]]
 function pathfinder.find_path(start_pos, target_area, entity, options)
+	-- start_pos is usually the current position, which isn't grid-aligned
+	local start_pos = vector.floor(start_pos)
 	local args = get_find_path_args(options, entity)
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
 	assert(target_area ~= nil and target_area.x ~= nil and target_area.y ~= nil and target_area.z ~= nil)
@@ -1378,8 +1383,9 @@ pathfinder.is_node_collidable = is_node_collidable
 function pathfinder.can_stand_at(pos, height)
 	local pos = vector.floor(pos)
 	-- must be able to occupy pos and stand on the node below
-	if not is_node_clear(pos) then
-		minetest.log("warning", "can_stand_at: not clear " .. minetest.pos_to_string(pos))
+	local node = minetest.get_node(pos)
+	if not is_node_clear(node) then
+		minetest.log("warning", string.format("can_stand_at: not clear %s %s", minetest.pos_to_string(pos), node.name))
 		return false
 	end
 

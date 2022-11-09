@@ -34,11 +34,21 @@ local wayzone_path = {}
 function wayzone_path.start(start_pos, target_pos, args)
 	assert(start_pos ~= nil)
 	assert(target_pos ~= nil)
+	local start_pos = vector.floor(start_pos)
 
 	local self = {}
 
-	minetest.log("action", string.format(" wayzone_path.start: %s to %s",
-			minetest.pos_to_string(start_pos), minetest.pos_to_string(target_pos)))
+	local start_node = minetest.get_node(start_pos)
+	local start_bpos = vector.new(start_pos.x, start_pos.y-1, start_pos.z)
+	local start_bnode = minetest.get_node(start_bpos)
+
+	local target_node = minetest.get_node(target_pos)
+	local target_bpos = vector.new(target_pos.x, target_pos.y-1, target_pos.z)
+	local target_bnode = minetest.get_node(target_bpos)
+
+	minetest.log("action", string.format(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s])",
+			minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
+			minetest.pos_to_string(target_pos), target_node.name, target_bnode.name))
 
 	self.ss = wayzone_store.get(args)
 	-- other fields that show up later:
@@ -59,9 +69,13 @@ end
 
 -- grab the next position
 function wayzone_path:next_goal(cur_pos)
+	if pathfinder.is_node_collidable(cur_pos) then
+		cur_pos = vector.new(cur_pos.x, cur_pos.y+1, cur_pos.z)
+	end
+	local si = self.ss:get_pos_info(cur_pos, "next_goal.si")
 	-- Did we reach the goal?
-	if self.target_pos:inside(cur_pos) then
-		minetest.log("action", string.format("next_goal: inside end_pos %s", minetest.pos_to_string(cur_pos)))
+	if self.target_pos:inside(si.pos) then
+		minetest.log("action", string.format("next_goal: inside end_pos %s", minetest.pos_to_string(si.pos)))
 		return nil
 	end
 
@@ -79,8 +93,7 @@ function wayzone_path:next_goal(cur_pos)
 	self.path_idx = 0
 
 	-- grab info about the start and end wayzones
-	local si = self.ss:get_pos_info(cur_pos)
-	local di = self.ss:get_pos_info(self.target_pos)
+	local di = self.ss:get_pos_info(self.target_pos, "next_goal.di")
 	if si.wz == nil or di.wz == nil then
 		-- Oof. Someone must have placed a block over the target position
 		-- FIXME: if target_pos describes an area, we need to pick a different position in that area.
@@ -93,7 +106,7 @@ function wayzone_path:next_goal(cur_pos)
 		if self.wzkeys[si.wz.key] == nil then
 			minetest.log("warning",
 				string.format("next_goal: did not find current %s %s in path! Recomputing.",
-					si.wz.key, minetest.pos_to_string(cur_pos)))
+					si.wz.key, minetest.pos_to_string(si.pos)))
 			self.wzpath = nil
 		end
 	end
@@ -101,18 +114,18 @@ function wayzone_path:next_goal(cur_pos)
 	-- recompute the wayzone sequence
 	if self.wzpath == nil then
 		if self.wzpath_fail then
-			minetest.log("action", string.format("wzpath_rebuild(%s) already failed", minetest.pos_to_string(cur_pos)))
+			minetest.log("action", string.format("wzpath_rebuild(%s) already failed", minetest.pos_to_string(si.pos)))
 			return nil, fail.no_path
 		end
 		-- rebuild the path
-		minetest.log("action", string.format("calling wzpath_rebuild(%s)", minetest.pos_to_string(cur_pos)))
+		minetest.log("action", string.format("calling wzpath_rebuild(%s)", minetest.pos_to_string(si.pos)))
 		self.wzpath_idx = 0
 
 		local time_start = minetest.get_us_time()
 
-		self.wzpath = self.ss:find_path(cur_pos, self.target_pos)
+		self.wzpath = self.ss:find_path(si.pos, self.target_pos)
 		if self.wzpath == nil then
-			minetest.log("action", string.format("rebuild at %s fail", minetest.pos_to_string(cur_pos)))
+			minetest.log("action", string.format("rebuild at %s fail", minetest.pos_to_string(si.pos)))
 			self.wzpath_fail = true
 			return nil, fail.no_path
 		end
@@ -167,13 +180,13 @@ function wayzone_path:next_goal(cur_pos)
 	end
 
 	-- find the path
-	self.path = pathfinder.find_path(cur_pos, target_area, nil, {want_nil=true})
+	self.path = pathfinder.find_path(si.pos, target_area, nil, {want_nil=true})
 	if self.path == nil then
 		return nil, fail.no_path
 	end
 	if #self.path > 0 then
 		minetest.log("action", string.format("find_path %s -> %s len %d",
-			minetest.pos_to_string(cur_pos),
+			minetest.pos_to_string(si.pos),
 			minetest.pos_to_string(self.target_pos), #self.path))
 		self.path_idx = 1
 		local pp = self.path[1]

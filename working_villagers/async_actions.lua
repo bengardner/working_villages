@@ -2,93 +2,188 @@ local fail = working_villages.require("failures")
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local pathfinder = working_villages.require("pathfinder")
+local wayzone_path = working_villages.require("wayzone_pathfinder")
+local wayzone_utils = working_villages.require("wayzone_utils")
 
---TODO: add variable precision
-function working_villages.villager:go_to(pos)
-	self.destination=vector.round(pos)
-	if func.walkable_pos(self.destination) then
-		self.destination=pathfinder.get_ground_level(vector.round(self.destination))
-	end
-	local val_pos = func.validate_pos(self.object:get_pos())
-	self.path = pathfinder.find_path(val_pos, self.destination, self)
-	self:set_timer("go_to:find_path",0) -- find path interval
-	self:set_timer("go_to:change_dir",0)
-	self:set_timer("go_to:give_up",0)
-	if self.path == nil then
-		--TODO: actually no path shouldn't be accepted
-		--we'd have to check whether we can find a shorter path in the right direction
-		--return false, fail.no_path
-		self.path = {self.destination}
-	end
+--[[
+This does the actual movement.
+Gets a path and follows it.
+
+returns:
+ * true : check and maybe try again
+ * false, reason : give up
+]]
+local function try_a_path(self, dest_pos, dest_radius, dest_height)
+	-- NOTE: the *caller* must verify that dest_pos is valid.
+	--  It is perfectly OK to set dest_pos to the position of a log and set
+	--  radius to, say, 4. We shouldn't scan up the to the top of the tree!
+
+	-- -- round the dest and find a walkable node at that X-Z.
+	-- -- self.destination will be above a walkable surface.
+	-- -- We may not be able to stand there, so it may be unreachable.
+	-- self.destination = pathfinder.get_ground_level(vector.round(dest_pos))
+	-- if self.destination == nil then
+	-- 	-- unlikely that the entire column is filled, but whatever
+	-- 	return false, fail.no_path
+	-- end
+	assert(dest_pos ~= nil)
+
+	self.destination = vector.round(dest_pos)
+	wayzone_utils.put_marker(self.destination, "target")
+
+	-- calculate the path with a radius
+	local start_pos = vector.round(self.object:get_pos())
+	--if dest_height ~= nil then
+	--	self.path = pathfinder.find_path_cylinder(start_pos, self, self.destination, dest_radius, dest_height)
+	--else
+	--	self.path = pathfinder.find_path_sphere(start_pos, self, self.destination, dest_radius)
+	--end
+
+	wayzone_utils.put_marker(start_pos, "start")
+
+	local wzp = wayzone_path.start(start_pos, self.destination)
+	self.cur_goal = nil
+
+	self:set_timer("go_to:find_path",0)  -- interval to regen the path
+	self:set_timer("go_to:change_dir",0) -- how often to turn
+
 	--print("the first waypiont on his path:" .. minetest.pos_to_string(self.path[1]))
-	self:change_direction(self.path[1])
+	--self:change_direction(self.path[1])
 	self:set_animation(working_villages.animation_frames.WALK)
 
 	-- NOTE: If we will do a sharp turn (90 deg) when we hit the current
-	-- waypoint, then we need to reach exactly the cell center. That means
-	-- updating the facing direction on every step.
+	-- waypoint, then we need to reach exactly the node center before the turn.
+	-- That means updating the facing direction on every step.
 	-- This does a 2D dot product of the vector pos->wp1 and wp1->wp2.
 	-- If over 60 deg, then use exact positioning.
 	local function need_exact_pos()
-		if #self.path < 2 then return false end
-		local pos = self.object:get_pos()
-		local wp1 = self.path[1]
-		local wp2 = self.path[2]
-		local v1 = vector.normalize(vector.subtract(pos, wp1))
-		local v2 = vector.normalize(vector.subtract(wp1, wp2))
-		local dp = v1.x * v2.x + v1.z * v2.z
-		return dp <= 0.5 -- 60+ deg
+		return true
+		--if #self.path < 2 then return false end
+		--local pos = self.object:get_pos()
+		--local wp1 = self.path[1]
+		--local wp2 = self.path[2]
+		--local v1 = vector.normalize(vector.subtract(pos, wp1))
+		--local v2 = vector.normalize(vector.subtract(wp1, wp2))
+		--local dp = v1.x * v2.x + v1.z * v2.z
+		--return dp <= 0.5 -- 60+ deg
 	end
 	local exact_step = need_exact_pos()
 
-	while #self.path ~= 0 do
+	while true do
+		local cur_pos = vector.round(self.object:get_pos())
+		if self.cur_goal == nil then
+			self.cur_goal = wzp:next_goal(cur_pos)
+			if self.cur_goal == nil then
+				break
+			end
+			self:set_timer("go_to:find_path",0)
+			self:change_direction(self.cur_goal)
+			wayzone_utils.put_marker(self.cur_goal, "node")
+		end
 		self:count_timer("go_to:find_path")
 		self:count_timer("go_to:change_dir")
+
+		-- If we have haven't reached the next waypoint for a while, then we
+		-- are likely stuck and need to recalculate the path.
 		if self:timer_exceeded("go_to:find_path",100) then
-			val_pos = func.validate_pos(self.object:get_pos())
-			if func.walkable_pos(self.destination) then
-				self.destination=pathfinder.get_ground_level(vector.round(self.destination))
-			end
-			local path = pathfinder.find_path(val_pos,self.destination,self)
-			if path == nil then
-				self:count_timer("go_to:give_up")
-				if self:timer_exceeded("go_to:give_up",3) then
-					print("villager can't find path to "..minetest.pos_to_string(val_pos))
-					return false, fail.no_path
-				end
-			else
-				self.path = path
-				exact_step = need_exact_pos()
-			end
+			-- We are stuck, so give up. This function will be called again.
+			break
+			-- -- someone may have placed a node on top of our destination, so recalculate ground level
+			-- self.destination = pathfinder.get_ground_level(self.destination)
+			-- if self.destination == nil then
+			-- 	-- unlikely that the entire column is filled, but whatever
+			-- 	return false, fail.no_path
+			-- end
+			--
+			-- -- don't endlessly recalculate if we are really stuck
+			-- self:count_timer("go_to:give_up")
+			-- if self:timer_exceeded("go_to:give_up", 3) then
+			-- 	print("villager can't find path to "..minetest.pos_to_string(val_pos))
+			-- 	return false, fail.no_path
+			-- end
+			--
+			-- -- calculate the path again
+			-- start_pos = vector.round(self.object:get_pos())
+			-- self.path = pathfinder.find_path_sphere(start_pos, self, self.destination, radius)
+			-- exact_step = need_exact_pos()
 		end
 
 		if exact_step or self:timer_exceeded("go_to:change_dir",30) then
-			self:change_direction(self.path[1])
+			self:change_direction(self.cur_goal)
+		end
+
+		local function is_same_vec(v1, v2)
+			local r1 = vector.round(v1)
+			return r1.x == v2.x and r1.y == v2.y and r1.z == v2.z
 		end
 
 		-- follow path
-		if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
-			table.remove(self.path, 1)
-			exact_step = need_exact_pos()
+		--if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
+		--if self:is_near(self.path[1], 1) then
+		if is_same_vec(cur_pos, self.cur_goal) then
+			--minetest.log("action", "jumping to "..minetest.pos_to_string(self.path[1]))
+			--self.object:set_pos(self.path[1])
+			--table.remove(self.path, 1)
+			--exact_step = need_exact_pos()
+			self.cur_goal = nil
 
-			if #self.path == 0 then -- end of path
-				 --keep walking another step for good measure
-				coroutine.yield()
-				break
-			else -- else next step, follow next path.
-				self:set_timer("go_to:find_path",0)
-				self:change_direction(self.path[1])
-			end
+			--if #self.path == 0 then -- end of path
+			--	-- keep walking another step for good measure
+			--	coroutine.yield()
+			--	break
+			--end
+
+			--self:set_timer("go_to:find_path",0)
+			--self:change_direction(self.path[1])
 		end
-		-- if vilager is stopped by obstacles, the villager must jump.
+		-- if vilager is stopped by obstacles, the villager must jump or open the door.
 		self:handle_obstacles(true)
 		-- end step
 		coroutine.yield()
 	end
-	-- stop
-	self.object:set_velocity{x = 0, y = 0, z = 0}
+
+	-- the path has been completed, so we need to stop and stand.
+	-- the path may not have placed us at the destination, so the caller will
+	-- check and retry.
 	self.path = nil
+	self.object:set_velocity{x = 0, y = 0, z = 0}
 	self:set_animation(working_villages.animation_frames.STAND)
+	return true
+end
+
+--[[
+This is the MOB movement function.
+It will try really hard to move to @pos.
+If it can't get within @radius+1 of dest_pos, then this will fail.
+]]
+function working_villages.villager:go_to(dest_pos, dest_radius, dest_height)
+	local target_pos = pathfinder.get_neighbor_ground_level(dest_pos)
+	if target_pos == nil then
+		minetest.log("warning", string.format("go_to: did not find ground for %s", minetest.pos_to_string(dest_pos)))
+		return false, fail.no_path
+	end
+	-- dest_radius must be at least 1
+	if dest_radius == nil or dest_radius < 1 then
+		dest_radius = 1
+	end
+	if dest_height ~= nil and dest_height < 1 then
+		dest_height = 1
+	end
+	local function close_enough()
+		local d = vector.distance(self.object:get_pos(), dest_pos)
+		return d <= dest_radius + 1
+	end
+
+	self:set_timer("go_to:give_up",0)    -- counter to give up if unable to reach dest
+	while not close_enough() do
+		try_a_path(self, target_pos, dest_radius, dest_height)
+		coroutine.yield()
+		-- see if we should try again
+		self:count_timer("go_to:give_up")    -- counter to give up if unable to reach dest
+		if self:timer_exceeded("go_to:give_up", 3) then
+			return false, fail.no_path
+		end
+	end
 	return true
 end
 
@@ -115,11 +210,11 @@ end
 
 local drop_range = {x = 2, y = 10, z = 2}
 
-function working_villages.villager:dig(pos,collect_drops)
+function working_villages.villager:dig(pos,collect_drops,do_dist_check)
 	if func.is_protected(self, pos) then return false, fail.protected end
 	self.object:set_velocity{x = 0, y = 0, z = 0}
 	local dist = vector.subtract(pos, self.object:get_pos())
-	if vector.length(dist) > 5 then
+	if do_dist_check ~= false and vector.length(dist) > 5 then
 		self:set_animation(working_villages.animation_frames.STAND)
 		return false, fail.too_far
 	end

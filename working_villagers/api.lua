@@ -166,6 +166,7 @@ function working_villages.villager:get_nearest_enemy(range_distance)
   end
   return enemy
 end
+
 -- working_villages.villager.get_nearest_item_by_condition returns the position of
 -- an item that returns true for the condition
 function working_villages.villager:get_nearest_item_by_condition(cond, range_distance)
@@ -195,6 +196,35 @@ function working_villages.villager:get_nearest_item_by_condition(cond, range_dis
     end
   end
   return item;
+end
+
+-- working_villages.villager.get_nearest_item_by_condition returns the position of
+-- an item that returns true for the condition
+function working_villages.villager:get_items_by_condition(cond, range_distance)
+	local max_distance=range_distance
+	if type(range_distance) == "table" then
+		max_distance=math.max(math.max(range_distance.x,range_distance.y),range_distance.z)
+	end
+	local item = nil
+	local min_distance = max_distance
+	local position = self.object:get_pos()
+
+	local all_objects = minetest.get_objects_inside_radius(position, max_distance)
+	for _, object in pairs(all_objects) do
+		if not object:is_player() and object:get_luaentity() and object:get_luaentity().name == "__builtin:item" then
+			local found_item = ItemStack(object:get_luaentity().itemstring):to_table()
+			if found_item ~= nil and cond(found_item) then
+				local item_position = object:get_pos()
+				local distance = vector.distance(position, item_position)
+
+				if distance < min_distance then
+					min_distance = distance
+					item = object
+				end
+			end
+		end
+	end
+	return item;
 end
 
 -- working_villages.villager.get_front returns a position in front of the villager.
@@ -345,24 +375,41 @@ function working_villages.villager:change_direction(destination)
 	local position = self.object:get_pos()
 	local direction = vector.subtract(destination, position)
 
-	local node = minetest.get_node(position)
-	if pathfinder.is_node_climbable(node) then
-		if math.abs(direction.y) > 0.2 then --(math.abs(direction.x) + math.abs(direction.z)) then
-			local rpos = vector.round(position)
-			if direction.y > 0 then
-				self.object:set_velocity{ x=0, y=1, z=0 }
-			else
-				self.object:set_velocity{ x=0, y=-1, z=0 }
-			end
-			-- center on and face the ladder
-			self.object:set_pos{x=rpos.x, y=position.y, z=rpos.z}
-			self:set_yaw_by_direction(minetest.wallmounted_to_dir(node.param2))
+	--[[
+	minetest.log("action", "change_dir "
+				 ..minetest.pos_to_string(position)
+				 .." to "..minetest.pos_to_string(destination)
+				 .." dir="..minetest.pos_to_string(direction))
+	]]
+
+	local function do_climb(node, dy)
+		local rpos = vector.round(position)
+		self.object:set_velocity{ x=0, y=dy, z=0 }
+
+		-- center on and face the ladder
+		self.object:set_pos{x=rpos.x, y=position.y, z=rpos.z}
+		self:set_yaw_by_direction(minetest.wallmounted_to_dir(node.param2))
+	end
+
+	if direction.y > 0 then
+		local node = minetest.get_node(position)
+		if pathfinder.is_node_climbable(node) then
+			minetest.log("action", "climbing up from "..minetest.pos_to_string(position).." to "..minetest.pos_to_string(destination).." dy="..tostring(direction.y))
+			do_climb(node, 1)
+			return
+		end
+	elseif direction.y < 0 then
+		local node = minetest.get_node({x=position.x, y=position.y-1, z=position.z})
+		if pathfinder.is_node_climbable(node) then
+			minetest.log("action", "climbing down from "..minetest.pos_to_string(position).." to "..minetest.pos_to_string(destination).." dy="..tostring(direction.y))
+			do_climb(node, -1)
 			return
 		end
 	end
 
 	direction.y = 0
 	local velocity = vector.multiply(vector.normalize(direction), 1.5)
+	--minetest.log("action", "velocity "..tostring(velocity))
 
 	self.object:set_velocity(velocity)
 	self:set_yaw_by_direction(direction)
@@ -490,11 +537,13 @@ function working_villages.villager:jump()
   ctrl:set_velocity{x = velocity.x, y = jump_force, z = velocity.z}
 end
 
---working_villages.villager.handle_obstacles(ignore_fence,ignore_doors)
---if the villager hits a walkable he wil jump
---if ignore_fence is false the villager will not jump over fences
---if ignore_doors is false and the villager hits a door he opens it
-function working_villages.villager:handle_obstacles(ignore_fence,ignore_doors)
+--[[
+working_villages.villager.handle_obstacles(ignore_fence,ignore_doors)
+if the villager hits a walkable he will jump
+if ignore_fence is false the villager will not jump over fences
+if ignore_doors is false and the villager hits a door he opens it
+]]
+function working_villages.villager:handle_obstacles(ignore_fence, ignore_doors)
   local velocity = self.object:get_velocity()
   local front_diff = self:get_look_direction()
   for i,v in pairs(front_diff) do

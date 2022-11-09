@@ -40,6 +40,7 @@ working_villages.require("commanding_sceptre")
 working_villages.require("deprecated")
 
 working_villages.require("pathfinder_tester")
+working_villages.require("query_tool")
 working_villages.require("waypoint_tool")
 working_villages.require("wayzone_pathfinder")
 

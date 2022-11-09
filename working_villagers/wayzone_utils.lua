@@ -129,16 +129,59 @@ function wayzone_utils.show_particles_wzpath(wzpath, start_pos, target_pos)
 	end
 end
 
+local escape_tab = {
+	[0x22] = '\"',   -- escape ", since that is used to surround the string
+	[0x5C] = '\\\\', -- escape \, since that is used for escape codes
+	[0x00] = '\\0',
+	[0x09] = '\\t',
+	[0x0a] = '\\n',
+	[0x0b] = '\\v',
+	[0x0c] = '\\f',
+	[0x0d] = '\\r',
+}
+
+-- Escape any byte outside of 0x20 - 0x7e so then can be printed in the log.
+-- The string is quoted with double-quotes if any escaping was done.
+local function escape_unprintable(text)
+	-- Scan to see if any character are unprintable
+	local need_escape = false
+	for idx=1,#text do
+		local ch = string.byte(text, idx)
+		if ch < 0x20 or ch > 0x7e then
+			need_escape = true
+			break
+		end
+	end
+	if not need_escape then
+		return text
+	end
+	local tab = {'"'}
+	for idx=1,#text do
+		local ch = string.byte(text, idx)
+		local ee = escape_tab[ch]
+		if ee ~= nil then
+			table.insert(tab, ee)
+		elseif ch < 0x20 or ch > 0x7e then
+			table.insert(tab, string.format("\\x%02x", ch))
+		else
+			table.insert(tab, string.char(ch))
+		end
+	end
+	table.insert(tab, '"')
+	return table.concat(tab, '')
+end
+wayzone_utils.escape_unprintable = escape_unprintable
+
 -- log the content of a table, recurse 1 level
 function wayzone_utils.log_table(name, tab)
 	minetest.log("action", string.format("%s content", name))
 	for k, v in pairs(tab) do
 		if type(v) == 'table' then
 			for k2, v2 in pairs(v) do
-				minetest.log("action", string.format("  | %s.%s = %s", k, k2, tostring(v2)))
+				minetest.log("action", string.format("  | %s.%s = %s", k, k2, escape_unprintable(tostring(v2))))
 			end
 		else
-			minetest.log("action", string.format("  | %s = %s", k, tostring(v)))
+			minetest.log("action", string.format("  | %s = %s", k, escape_unprintable(tostring(v))))
 		end
 	end
 end
@@ -166,6 +209,25 @@ function wayzone_utils.chunks_are_adjacent(cpos1, cpos2)
 	local dz = math.abs(cpos1.z - cpos2.z)
 	--minetest.log("action", string.format("  dx=%d dy=%d dz=%d", dx, dy, dz))
 	return (dx + dy + dz) <= wayzone.chunk_size
+end
+
+local marker_def = {
+	start = {texture="testpathfinder_waypoint_start.png", size=4, time=5},
+	target = {texture="testpathfinder_waypoint_end.png", size=4, time=10},
+	node = {texture="testpathfinder_waypoint.png", size=4, time=5},
+}
+
+--[[
+Place a marker (particle) for debug.
+@pos is any grid-aligned marker
+@name may be "start", "target", "node".
+]]
+function wayzone_utils.put_marker(pos, name)
+	local def = marker_def[name]
+	if def == nil then
+		def = marker_def.node
+	end
+	put_particle(pos, def)
 end
 
 return wayzone_utils

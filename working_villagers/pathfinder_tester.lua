@@ -36,11 +36,11 @@ local function do_path_find_with_timer(player, pos1, pos2)
 
 	local time_start = minetest.get_us_time()
 
+	local path
 	if use_coroutine ~= nil then
 		--local wzp = waypoints.path_start(pos1, pos2)
 		local co = coroutine.create(co_path)
 		--minetest.log("action", "starting...")
-		local path
 		local ret, val = coroutine.resume(co, pos1, pos2)
 		--minetest.log("action", string.format("  -> %s %s", tostring(ret), tostring(val)))
 		if ret and val ~= nil then

@@ -17,7 +17,7 @@ local function do_waypoint_flood(user, pos, all_zones)
 
 	local ss = wayzone_store.get()
 
-	local ii = ss:get_pos_info(pos)
+	local ii = ss:get_pos_info(pos, "tool")
 
 	if all_zones then
 		for idx, wz in ipairs(ii.wzc) do
