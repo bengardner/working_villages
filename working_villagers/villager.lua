@@ -647,6 +647,101 @@ function villager:set_state_info(text)
   self.state_info = text
 end
 
+--------------------------------------------------------------------
+-- Tasks
+
+-- Add a task by name, with an optional priority override
+function villager:task_add(name, priority)
+	-- If we already added this task by name, we can only change the priority
+	local info = self.task_queue[name]
+	if info ~= nil then
+		if priority ~= nil and info.priority ~= priority then
+			info.priority = priority
+		end
+		return true
+	end
+
+	-- get the registered task
+	info = working_villages.registered_tasks[name]
+	if info == nil then
+		minetest.log("warning", string.format("villager:task_add: unknown task %s", name))
+		return false
+	end
+
+	local new_info = { name=name, func=info.func, priority=priority or info.priority }
+	self.task_queue[name] = new_info
+	minetest.log("action", string.format("%s: added task %s priority %d", self.product_name, new_info.name, new_info.priority))
+	return true
+end
+
+-- Remove a task by name, @reason is for logging
+function villager:task_del(name, reason)
+	local info = self.task_queue[name]
+	if info ~= nil
+		minetest.log("action", string.format("%s: removed task %s priority %d %s",
+				self.product_name, info.name, info.priority, reason))
+		self.task_queue[name] = nil
+	end
+end
+
+-- get the best task
+function villager:task_best()
+	local best_info
+	for _, info in pairs(self.task_queue) do
+		if best_info == nil or info.priority > best_info.priority then
+			best_info = info
+		end
+	end
+	if best_info == nil then
+		best_info = working_villages.registered_tasks["idle"]
+	end
+	return best_info
+end
+
+-- this executes the best task as a coroutine
+function villager:task_execute(self, dtime)
+	local best = self:task_best()
+	-- Does the coroutine exist?
+	if self.task.thread ~= nil then
+		-- Clean up dead task or cancel no-longer-best task
+		if coroutine.status(self.task.thread) == "dead" then
+			-- Remove the task from the queue if it returned true
+			if self.task.ret == true then
+				self:task_del(self.task.name, "complete")
+			end
+			self.task = {}
+			best = self:task_best()
+		elseif best == nil or best.name ~= self.task.name then
+			coroutine.close(self.task.thread)
+			self.task = {}
+			best = self:task_best()
+		end
+	end
+
+	-- start or resume the task
+	if best ~= nil then
+		if self.task.thread == nil then
+			self.task.name = best.name
+			self.task.priority = best.priority
+			self.task.thread = coroutine.create(best.func)
+		end
+
+		-- this should always be true
+		if coroutine.status(self.task.thread) == "suspended" then
+			local ret = {coroutine.resume(self.task.thread, self, dtime)}
+			if ret[1] == true then
+				self.task.ret = ret[2]
+			else
+				minetest.log("warning", string.format("task %s failed: %s", self.task.name, tostring(ret[2])))
+				-- remove it from the queue
+				self:task_del(self.task.name, "failed")
+			end
+		end
+	end
+end
+
+--------------------------------------------------------------------
+
 -- villager:new returns a new villager object.
 function villager:new(o)
 	return setmetatable(o or {}, {__index = self})
