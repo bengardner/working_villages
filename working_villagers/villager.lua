@@ -697,7 +697,7 @@ end
 -- Remove a task by name, @reason is for logging
 function villager:task_del(name, reason)
 	local info = self.task_queue[name]
-	if info ~= nil
+	if info ~= nil then
 		log.action("%s: removed task %s priority %d %s",
 			self.product_name, info.name, info.priority, reason)
 		self.task_queue[name] = nil

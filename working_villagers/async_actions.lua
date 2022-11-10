@@ -238,7 +238,7 @@ function working_villages.villager:collect_nearby_items_by_condition(cond, searc
 				minetest.pos_to_string(rpos))
 			local ret, msg = self:go_to(rpos)
 			if ret ~= true then
-				log.action(" -- go_to fail %s", msg))
+				log.action(" -- go_to fail %s", msg)
 			else
 				self:pickup_item()
 			end
