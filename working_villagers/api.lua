@@ -19,6 +19,8 @@ working_villages.registered_jobs = {}
 
 working_villages.registered_eggs = {}
 
+working_villages.registered_tasks = {}
+
 -- records failed node place attempts to prevent repeating mistakes
 -- key=minetest.pos_to_string(pos) val=(os.clock()+180)
 local failed_pos_data = {}
@@ -196,6 +198,22 @@ function working_villages.register_job(job_name, def)
   working_villages.job_inv:add_item("main", ItemStack(name))
 end
 
+function working_villages.register_task(task_name, def)
+	if working_villages.registered_tasks[task_name] ~= nil then
+		minetest.log("warning", string.format("working_villages.register_task: exists %s", task_name))
+	end
+	if def.func == nil then
+		minetest.log("warning", string.format("working_villages.register_task: %s missing func", task_name))
+		return
+	end
+	if def.priority == nil then
+		minetest.log("warning", string.format("working_villages.register_task: %s missing priority", task_name))
+		return
+	end
+	def.name = task_name
+	working_villages.registered_tasks[task_name] = def
+end
+
 -- working_villages.register_egg registers a definition of a new egg.
 function working_villages.register_egg(egg_name, def)
   local name = cmnp(egg_name)
@@ -245,7 +263,9 @@ function working_villages.register_villager(product_name, def)
         if listname == "job" then
           local job_name = stack:get_name()
           local job = working_villages.registered_jobs[job_name]
-          if type(job.on_start)=="function" then
+					if type(job.logic)=="function" then
+						-- do nothing here
+          elseif type(job.on_start)=="function" then
             job.on_start(self)
             self.job_thread = coroutine.create(job.on_step)
           elseif type(job.jobfunc)=="function" then
@@ -275,7 +295,9 @@ function working_villages.register_villager(product_name, def)
           local job = working_villages.registered_jobs[job_name]
           self.time_counters = {}
           if job then
-            if type(job.on_stop)=="function" then
+						if type(job.logic)=="function" then
+							-- do nothing
+            elseif type(job.on_stop)=="function" then
               job.on_stop(self)
             elseif type(job.jobfunc)=="function" then
               self.job_thread = false
@@ -300,14 +322,18 @@ function working_villages.register_villager(product_name, def)
           local job = working_villages.registered_jobs[job_name]
 
           if to_list == "job" then
-            if type(job.on_start)=="function" then
+						if type(job.logic)=="function" then
+							self:task_clear()
+            elseif type(job.on_start)=="function" then
               job.on_start(self)
               self.job_thread = coroutine.create(job.on_step)
             elseif type(job.jobfunc)=="function" then
               self.job_thread = coroutine.create(job.jobfunc)
             end
           elseif from_list == "job" then
-            if type(job.on_stop)=="function" then
+						if type(job.logic)=="function" then
+							self:task_clear()
+            elseif type(job.on_stop)=="function" then
               job.on_stop(self)
             elseif type(job.jobfunc)=="function" then
               self.job_thread = false
@@ -392,6 +418,10 @@ function working_villages.register_villager(product_name, def)
       fix_pos_data(self)
     end
 
+		-- create task stuff
+		self.task_queue = {}
+		self.task = {}
+
     self:set_displayed_action("active")
 
     self.object:set_nametag_attributes{
@@ -408,7 +438,9 @@ function working_villages.register_villager(product_name, def)
 
     local job = self:get_job()
     if job ~= nil then
-      if type(job.on_start)=="function" then
+			if type(job.logic)=="function" then
+				self:task_clear()
+      elseif type(job.on_start)=="function" then
         job.on_start(self)
         self.job_thread = coroutine.create(job.on_step)
       elseif type(job.jobfunc)=="function" then
@@ -463,10 +495,11 @@ function working_villages.register_villager(product_name, def)
     -- pickup surrounding item.
     self:pickup_item()
 
-    if self.pause then
-      return
-    end
-    job_coroutines.resume(self,dtime)
+		if self.pause then
+			return
+		end
+		self:task_execute(dtime)
+    --job_coroutines.resume(self,dtime)
   end
 
   -- on_rightclick is a callback function that is called when a player right-click them.
@@ -556,4 +589,3 @@ function working_villages.register_villager(product_name, def)
     product_name    = name,
   })
 end
-

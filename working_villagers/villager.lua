@@ -684,6 +684,12 @@ function villager:task_del(name, reason)
 	end
 end
 
+-- clear all tasks, making the villager stupid for a tick
+-- the logic() function will add something.
+function villager:task_clear()
+	self.task_queue = {}
+end
+
 -- get the best task
 function villager:task_best()
 	local best_info
@@ -692,6 +698,7 @@ function villager:task_best()
 			best_info = info
 		end
 	end
+	-- FIXME: the idle task should be added by logic()
 	if best_info == nil then
 		best_info = working_villages.registered_tasks["idle"]
 	end
@@ -699,7 +706,7 @@ function villager:task_best()
 end
 
 -- this executes the best task as a coroutine
-function villager:task_execute(self, dtime)
+function villager:task_execute(dtime)
 	local best = self:task_best()
 	-- Does the coroutine exist?
 	if self.task.thread ~= nil then
@@ -738,6 +745,14 @@ function villager:task_execute(self, dtime)
 			end
 		end
 	end
+end
+
+-- this is a villager function because some may work different shifts (guard?)
+-- or go to bed early (farmer) or later (tarvern)
+-- but for now, just dawn-to-dusk.
+function villager:is_sleep_time()
+	local daytime = minetest.get_timeofday()
+	return (daytime < 0.2 or daytime > 0.805)
 end
 
 --------------------------------------------------------------------
