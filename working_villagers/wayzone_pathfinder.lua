@@ -20,6 +20,7 @@ Functions:
 local wayzone = working_villages.require("wayzone")
 local wayzone_chunk = working_villages.require("wayzone_chunk")
 local wayzone_store = working_villages.require("wayzone_store")
+local log = working_villages.require("log")
 
 local pathfinder = working_villages.require("pathfinder")
 local fail = working_villages.require("failures")
@@ -75,7 +76,7 @@ function wayzone_path:next_goal(cur_pos)
 	local si = self.ss:get_pos_info(cur_pos, "next_goal.si")
 	-- Did we reach the goal?
 	if self.target_pos:inside(si.pos) then
-		minetest.log("action", string.format("next_goal: inside end_pos %s", minetest.pos_to_string(si.pos)))
+		log.action("next_goal: inside end_pos %s", minetest.pos_to_string(si.pos))
 		return nil
 	end
 
@@ -114,18 +115,18 @@ function wayzone_path:next_goal(cur_pos)
 	-- recompute the wayzone sequence
 	if self.wzpath == nil then
 		if self.wzpath_fail then
-			minetest.log("action", string.format("wzpath_rebuild(%s) already failed", minetest.pos_to_string(si.pos)))
+			log.action("wzpath_rebuild(%s) already failed", minetest.pos_to_string(si.pos))
 			return nil, fail.no_path
 		end
 		-- rebuild the path
-		minetest.log("action", string.format("calling wzpath_rebuild(%s)", minetest.pos_to_string(si.pos)))
+		log.action("calling wzpath_rebuild(%s)", minetest.pos_to_string(si.pos))
 		self.wzpath_idx = 0
 
 		local time_start = minetest.get_us_time()
 
 		self.wzpath = self.ss:find_path(si.pos, self.target_pos)
 		if self.wzpath == nil then
-			minetest.log("action", string.format("rebuild at %s fail", minetest.pos_to_string(si.pos)))
+			log.action("rebuild at %s fail", minetest.pos_to_string(si.pos))
 			self.wzpath_fail = true
 			return nil, fail.no_path
 		end
@@ -133,7 +134,7 @@ function wayzone_path:next_goal(cur_pos)
 		local time_end = minetest.get_us_time()
 		local time_diff = time_end - time_start
 
-		minetest.log("action", string.format(" wzpath has %d in %d ms", #self.wzpath, time_diff/1000))
+		log.action(" wzpath has %d in %d ms", #self.wzpath, time_diff/1000)
 
 		local wzkeys = {} -- key=wz.key, val=index in wzpath
 		for idx, wz in ipairs(self.wzpath) do
@@ -141,7 +142,7 @@ function wayzone_path:next_goal(cur_pos)
 
 			-- log the wayzone path
 			local cpos, cidx = wayzone.key_decode_pos(wz.key)
-			minetest.log("action", string.format(" wzpath[%d] = %s  %s:%d", idx, wz.key, minetest.pos_to_string(cpos), cidx))
+			log.action(" wzpath[%d] = %s  %s:%d", idx, wz.key, minetest.pos_to_string(cpos), cidx)
 		end
 		--wayzones.show_particles_wzpath(self.wzpath, cur_pos, self.end_pos)
 
@@ -176,7 +177,7 @@ function wayzone_path:next_goal(cur_pos)
 	-- bound the search area to the one or two wayzones
 	wayzone.outside_wz(target_area, { si.wz, next_wz })
 	for _, wz in ipairs(target_area.wz_ok) do
-		minetest.log("action", string.format(" find_path wz_ok: %s", wz.key))
+		log.action(" find_path wz_ok: %s", wz.key)
 	end
 
 	-- find the path
@@ -185,16 +186,16 @@ function wayzone_path:next_goal(cur_pos)
 		return nil, fail.no_path
 	end
 	if #self.path > 0 then
-		minetest.log("action", string.format("find_path %s -> %s len %d",
+		log.action("find_path %s -> %s len %d",
 			minetest.pos_to_string(si.pos),
-			minetest.pos_to_string(self.target_pos), #self.path))
+			minetest.pos_to_string(self.target_pos), #self.path)
 		self.path_idx = 1
 		local pp = self.path[1]
 		minetest.log("action",
 			string.format("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
 		return pp
 	end
-	minetest.log("action", string.format("next_goal: empty path"))
+	log.action("next_goal: empty path")
 	return nil, fail.no_path
 end
 

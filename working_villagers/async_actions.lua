@@ -121,7 +121,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 		--if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
 		--if self:is_near(self.path[1], 1) then
 		if is_same_vec(cur_pos, self.cur_goal) then
-			--minetest.log("action", "jumping to "..minetest.pos_to_string(self.path[1]))
+			--log.action("jumping to %s", minetest.pos_to_string(self.path[1]))
 			--self.object:set_pos(self.path[1])
 			--table.remove(self.path, 1)
 			--exact_step = need_exact_pos()
@@ -159,9 +159,11 @@ If it can't get within @radius+1 of dest_pos, then this will fail.
 function working_villages.villager:go_to(dest_pos, dest_radius, dest_height)
 	local target_pos = pathfinder.get_neighbor_ground_level(dest_pos)
 	if target_pos == nil then
-		minetest.log("warning", string.format("go_to: did not find ground for %s", minetest.pos_to_string(dest_pos)))
+		log.warning("go_to: did not find ground for %s", minetest.pos_to_string(dest_pos))
 		return false, fail.no_path
 	end
+	log.action("go_to: %s => ground %s",
+		minetest.pos_to_string(dest_pos), minetest.pos_to_string(target_pos))
 	-- dest_radius must be at least 1
 	if dest_radius == nil or dest_radius < 1 then
 		dest_radius = 1
@@ -199,6 +201,50 @@ function working_villages.villager:collect_nearest_item_by_condition(cond, searc
 		self:go_to(pos)
 		self:pickup_item()
 	end
+end
+
+function working_villages.villager:collect_nearby_items_by_condition(cond, searching_range)
+	local items = self:get_items_by_condition(cond, searching_range)
+	if #items == 0 then
+		return false
+	end
+	log.action("collect_nearby_items_by_condition: found %d items", #items)
+	while #items > 0 do
+		local my_pos = self.object:get_pos()
+		if #items > 1 then
+			-- collect the closest item first
+			table.sort(items, function(a, b)
+				return vector.distance(my_pos, a:get_pos()) > vector.distance(my_pos, b:get_pos())
+			end)
+		end
+		log.action("  +++ %d items left", #items)
+		for i, x in ipairs(items) do
+			log.action("  +++ [%d] %s %d", i,
+					minetest.pos_to_string(x:get_pos()),
+					vector.distance(my_pos, x:get_pos()))
+		end
+		local item = items[#items]
+		table.remove(items)
+		local pos = item:get_pos()
+		local rpos = vector.round(pos)
+
+		--print("collecting item at:".. minetest.pos_to_string(pos))
+		local inv = self:get_inventory()
+
+		if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
+			log.action("Collecting %s @ %s %s",
+				item:get_luaentity().itemstring,
+				minetest.pos_to_string(pos),
+				minetest.pos_to_string(rpos))
+			local ret, msg = self:go_to(rpos)
+			if ret ~= true then
+				log.action(" -- go_to fail %s", msg))
+			else
+				self:pickup_item()
+			end
+		end
+	end
+	return true
 end
 
 -- delay the async action by @step_count steps

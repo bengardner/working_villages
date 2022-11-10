@@ -200,14 +200,14 @@ end
 
 function working_villages.register_task(task_name, def)
 	if working_villages.registered_tasks[task_name] ~= nil then
-		minetest.log("warning", string.format("working_villages.register_task: exists %s", task_name))
+		log.warning("working_villages.register_task: exists %s", task_name)
 	end
 	if def.func == nil then
-		minetest.log("warning", string.format("working_villages.register_task: %s missing func", task_name))
+		log.warning("working_villages.register_task: %s missing func", task_name)
 		return
 	end
 	if def.priority == nil then
-		minetest.log("warning", string.format("working_villages.register_task: %s missing priority", task_name))
+		log.warning("working_villages.register_task: %s missing priority", task_name)
 		return
 	end
 	def.name = task_name

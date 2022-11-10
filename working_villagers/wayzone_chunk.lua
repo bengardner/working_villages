@@ -58,9 +58,10 @@ Functions:
 	wayzone_chunk:is_dirty()
 		Check if the chunk needs to be regenerated.
 ]]
-local wayzone_chunk = {}
-
+local log = working_villages.require("log")
 local wayzone = working_villages.require("wayzone")
+
+local wayzone_chunk = {}
 
 function wayzone_chunk.new(pos, old_chunk)
 	local self = {}

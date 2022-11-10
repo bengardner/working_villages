@@ -19,7 +19,7 @@ local function co_path(pos1, pos2)
 		table.insert(path, cur_pos)
 		cur_pos = wzp:next_goal(cur_pos)
 	end
-	minetest.log("action", string.format("co return path %d", #path))
+	log.action("co return path %d", #path)
 	return path
 end
 
@@ -42,7 +42,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 		local co = coroutine.create(co_path)
 		--minetest.log("action", "starting...")
 		local ret, val = coroutine.resume(co, pos1, pos2)
-		--minetest.log("action", string.format("  -> %s %s", tostring(ret), tostring(val)))
+		--log.action("  -> %s %s", tostring(ret), tostring(val))
 		if ret and val ~= nil then
 			path = val
 		end
@@ -52,7 +52,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 			if ret and val ~= nil then
 				path = val
 			end
-			--minetest.log("action", string.format("  -> %s %s", tostring(ret), tostring(val)))
+			--log.action("  -> %s %s", tostring(ret), tostring(val))
 		end
 	else
 		path = co_path(pos1, pos2)
@@ -64,7 +64,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	--minetest.log("action", "done..." .. tostring(#path))
 
 	for idx, pos in ipairs(path) do
-		minetest.log("action", string.format(" [%d] %s", idx, minetest.pos_to_string(pos)))
+		log.action(" [%d] %s", idx, minetest.pos_to_string(pos))
 	end
 
 	local time_end = minetest.get_us_time()
@@ -126,7 +126,7 @@ local function find_path_for_player2(player, itemstack, pos1)
 	local gpos1 = pathfinder.get_ground_level(pos1)
 	local gpos2 = pathfinder.get_ground_level(pos2)
 	if gpos1 == nil or gpos2 == nil then
-		minetest.log("action", string.format("pathfinder tool: invalid positions s=%s e=%s", tostring(gpos1), tostring(gpos2)))
+		log.action("pathfinder tool: invalid positions s=%s e=%s", tostring(gpos1), tostring(gpos2))
 		return
 	end
 	do_path_find_with_timer(player, pos1, pos2)

@@ -2,6 +2,8 @@
 Scans a tree.
 Identifies all 'tree' and 'leaves' nodes.
 ]]
+local log = working_villages.require("log")
+
 local tree_scan = {}
 
 --[[
@@ -49,7 +51,7 @@ function tree_scan.check_tree(start_pos)
 				local pos = item.pos
 
 				if minetest.get_item_group(node.name, "tree") > 0 then
-					--minetest.log("warning", string.format("tree: %s %s", minetest.pos_to_string(pos), item.node.name))
+					--log.warning("tree: %s %s", minetest.pos_to_string(pos), item.node.name)
 					table.insert(trunk_pos, pos)
 
 					-- Explore 26 neighbors
@@ -69,7 +71,7 @@ function tree_scan.check_tree(start_pos)
 				else
 					local nodedef = minetest.registered_nodes[item.node.name]
 					if nodedef.walkable then
-						--minetest.log("warning", string.format("tree: NOT %s %s", minetest.pos_to_string(pos), item.node.name))
+						--log.warning("tree: NOT %s %s", minetest.pos_to_string(pos), item.node.name)
 						if other_maxy == nil or pos.y > other_maxy then
 							other_maxy = pos.y
 						end
@@ -95,9 +97,9 @@ function tree_scan.check_tree(start_pos)
 	table.sort(trunk_pos, pos_sort)
 	table.sort(leaves_pos, pos_sort)
 
-	minetest.log("action", string.format("tree: %s other_maxy=%d tree=%d leaves=%d",
-			minetest.pos_to_string(trunk_pos[1]),
-			tostring(other_maxy), #trunk_pos, #leaves_pos))
+	log.action("tree: %s other_maxy=%d tree=%d leaves=%d",
+		minetest.pos_to_string(trunk_pos[1]),
+		tostring(other_maxy), #trunk_pos, #leaves_pos)
 
 	-- If we have leaves or the "ground" is at the same level or lower than walkable nodes
 	if other_maxy == nil or #leaves_pos > 0 or other_maxy <= trunk_pos[1].y then

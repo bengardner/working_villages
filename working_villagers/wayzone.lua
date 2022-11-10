@@ -150,6 +150,7 @@ ToDo:
  - Add link chains
 ]]
 local S = default.get_translator
+local log = working_villages.require("log")
 
 local wayzone = {}
 
@@ -351,7 +352,7 @@ function wayzone:insert_exit(pos)
 	local lpos = self:pos_to_lpos(pos)
 	local x_idx, x_lpos = exit_index(self, lpos)
 	if x_idx == nil then
-		minetest.log("warning", string.format("no exit idx lpos=%s pos=%s", minetest.pos_to_string(lpos), minetest.pos_to_string(pos)))
+		log.warning("no exit idx lpos=%s pos=%s", minetest.pos_to_string(lpos), minetest.pos_to_string(pos))
 		return
 	end
 	-- We need to put it in the correct exited table to reduce iteration time.
@@ -445,16 +446,16 @@ function wayzone:finish(in_water)
 	-- REVISIT: use a bitmap for X,Z,+Y sides (8 bytes or u64)
 	local packed_exited = {}
 	for k, v in pairs(self.exited) do
-		--minetest.log("action", string.format("   idx=%d", k))
+		--log.action("   idx=%d", k)
 		assert(type(v) == "table")
 		local xxx = {}
 		for hash, _ in pairs(v) do
-			--minetest.log("action", string.format("   exit %s", hash))
+			--log.action("   exit %s", hash)
 			-- pack 16-bit hash MSB-first in a string
 			table.insert(xxx, string.char(bit.rshift(hash, 8), bit.band(hash, 0xff)))
 		end
 		packed_exited[k] = table.concat(xxx, '')
-		--minetest.log("action", string.format("packed %d=>%d", k, #packed_exited[k]))
+		--log.action("packed %d=>%d", k, #packed_exited[k])
 	end
 	self.exited = packed_exited
 
@@ -510,9 +511,9 @@ exit positions against the zone content.
 function wayzone:exited_to(wz_other)
 	for pos in self:iter_exited(wz_other.cpos) do
 		if wz_other:inside(pos) then
-			--minetest.log("action", string.format(" %s-%d connects to %s-%d",
+			--log.action(" %s-%d connects to %s-%d",
 			--	minetest.pos_to_string(self.cpos), self.index,
-			--	minetest.pos_to_string(wz_other.cpos), wz_other.index))
+			--	minetest.pos_to_string(wz_other.cpos), wz_other.index)
 			return true
 		end
 	end
@@ -721,13 +722,13 @@ end
 
 -- check if we have a link to the wayzone
 function wayzone:link_test_to(to_wz)
-	minetest.log("action", string.format("link_test: %s => %s", self.key, to_wz.key))
+	log.action("link_test: %s => %s", self.key, to_wz.key)
 	return self.link_to[to_wz.key] ~= nil
 end
 
 -- check if we have a link to the wayzone
 function wayzone:link_test_from(from_wz)
-	minetest.log("action", string.format("link_test: %s <= %s", self.key, from_wz.key))
+	log.action("link_test: %s <= %s", self.key, from_wz.key)
 	return self.link_from[to_wz.key] ~= nil
 end
 
@@ -735,10 +736,10 @@ local function wayzone_link_filter(link_tab, chash)
 	-- do a scan to see if we need to change anything
 	local found = false
 	for _, ni in pairs(link_tab) do
-		--minetest.log("action", string.format("wayzone_link_filter: check %s %x vs %x", ni.key, ni.chash, chash))
+		--log.action("wayzone_link_filter: check %s %x vs %x", ni.key, ni.chash, chash)
 		if ni.chash == chash then
 			found = true
-			--minetest.log("action", string.format("wayzone_link_filter: found %x", chash))
+			--log.action("wayzone_link_filter: found %x", chash)
 			break
 		end
 	end
@@ -747,7 +748,7 @@ local function wayzone_link_filter(link_tab, chash)
 		local link_new = {}
 		for _, ni in pairs(link_tab) do
 			if ni.chash ~= chash then
-				--minetest.log("action", string.format("wayzone_link_filter: keep %s", ni.key))
+				--log.action("wayzone_link_filter: keep %s", ni.key)
 				link_new[ni.key] = ni
 			end
 		end
@@ -758,7 +759,7 @@ end
 
 -- delete all links to wayzones in the chunk described by other_chash
 function wayzone:link_del(other_chash)
-	--minetest.log("action", string.format("wayzone:link_del self=%s other=%x", self.key, other_chash))
+	--log.action("wayzone:link_del self=%s other=%x", self.key, other_chash)
 	self.link_to = wayzone_link_filter(self.link_to, other_chash)
 	self.link_from = wayzone_link_filter(self.link_from, other_chash)
 end

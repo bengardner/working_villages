@@ -311,10 +311,10 @@ function villager:change_direction(destination)
 	local direction = vector.subtract(destination, position)
 
 	--[[
-	minetest.log("action", "change_dir "
-				 ..minetest.pos_to_string(position)
-				 .." to "..minetest.pos_to_string(destination)
-				 .." dir="..minetest.pos_to_string(direction))
+	log.action("change_dir %s to %s dir=%d",
+		minetest.pos_to_string(position),
+		minetest.pos_to_string(destination),
+		minetest.pos_to_string(direction))
 	]]
 
 	local function do_climb(node, dy)
@@ -329,14 +329,20 @@ function villager:change_direction(destination)
 	if direction.y > 0 then
 		local node = minetest.get_node(position)
 		if pathfinder.is_node_climbable(node) then
-			minetest.log("action", "climbing up from "..minetest.pos_to_string(position).." to "..minetest.pos_to_string(destination).." dy="..tostring(direction.y))
+			log.action("climbing up from %s to %s dy=%s",
+				minetest.pos_to_string(position),
+				minetest.pos_to_string(destination),
+				tostring(direction.y))
 			do_climb(node, 1)
 			return
 		end
 	elseif direction.y < 0 then
 		local node = minetest.get_node({x=position.x, y=position.y-1, z=position.z})
 		if pathfinder.is_node_climbable(node) then
-			minetest.log("action", "climbing down from "..minetest.pos_to_string(position).." to "..minetest.pos_to_string(destination).." dy="..tostring(direction.y))
+			log.action("climbing down from %s to %s dy=%s",
+				minetest.pos_to_string(position),
+				minetest.pos_to_string(destination),
+				tostring(direction.y))
 			do_climb(node, -1)
 			return
 		end
@@ -344,7 +350,7 @@ function villager:change_direction(destination)
 
 	direction.y = 0
 	local velocity = vector.multiply(vector.normalize(direction), 1.5)
-	--minetest.log("action", "velocity "..tostring(velocity))
+	--log.action("velocity %s", tostring(velocity))
 
 	self.object:set_velocity(velocity)
 	self:set_yaw_by_direction(direction)
@@ -678,13 +684,13 @@ function villager:task_add(name, priority)
 	-- get the registered task
 	info = working_villages.registered_tasks[name]
 	if info == nil then
-		minetest.log("warning", string.format("villager:task_add: unknown task %s", name))
+		log.warning("villager:task_add: unknown task %s", name)
 		return false
 	end
 
 	local new_info = { name=name, func=info.func, priority=priority or info.priority }
 	self.task_queue[name] = new_info
-	minetest.log("action", string.format("%s: added task %s priority %d", self.product_name, new_info.name, new_info.priority))
+	log.action("%s: added task %s priority %d", self.product_name, new_info.name, new_info.priority)
 	return true
 end
 
@@ -692,8 +698,8 @@ end
 function villager:task_del(name, reason)
 	local info = self.task_queue[name]
 	if info ~= nil
-		minetest.log("action", string.format("%s: removed task %s priority %d %s",
-				self.product_name, info.name, info.priority, reason))
+		log.action("%s: removed task %s priority %d %s",
+			self.product_name, info.name, info.priority, reason)
 		self.task_queue[name] = nil
 	end
 end
@@ -753,7 +759,7 @@ function villager:task_execute(dtime)
 			if ret[1] == true then
 				self.task.ret = ret[2]
 			else
-				minetest.log("warning", string.format("task %s failed: %s", self.task.name, tostring(ret[2])))
+				log.warning("task %s failed: %s", self.task.name, tostring(ret[2]))
 				-- remove it from the queue
 				self:task_del(self.task.name, "failed")
 			end

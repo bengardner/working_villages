@@ -2,6 +2,7 @@
 Misc utility functions that do not belong anywhere else.
 ]]
 local wayzone = working_villages.require("wayzone")
+local log = working_villages.require("log")
 
 local wayzone_utils = {}
 
@@ -107,8 +108,8 @@ function wayzone_utils.show_particles_wzpath(wzpath, start_pos, target_pos)
 
 		local clo_xcc = string.format("%s^[multiply:#%02x%02x%02x", xc, cc[1]/2, cc[2]/2, cc[3]/2)
 
-		minetest.log("action", string.format("  center=%s target=%s closest=%s",
-				minetest.pos_to_string(pos), minetest.pos_to_string(cur_tgt), minetest.pos_to_string(closest)))
+		log.action("  center=%s target=%s closest=%s",
+			minetest.pos_to_string(pos), minetest.pos_to_string(cur_tgt), minetest.pos_to_string(closest))
 		minetest.add_particle({
 			pos = pos,
 			expirationtime = 15,
@@ -174,14 +175,14 @@ wayzone_utils.escape_unprintable = escape_unprintable
 
 -- log the content of a table, recurse 1 level
 function wayzone_utils.log_table(name, tab)
-	minetest.log("action", string.format("%s content", name))
+	log.action("%s content", name)
 	for k, v in pairs(tab) do
 		if type(v) == 'table' then
 			for k2, v2 in pairs(v) do
-				minetest.log("action", string.format("  | %s.%s = %s", k, k2, escape_unprintable(tostring(v2))))
+				log.action("  | %s.%s = %s", k, k2, escape_unprintable(tostring(v2)))
 			end
 		else
-			minetest.log("action", string.format("  | %s = %s", k, escape_unprintable(tostring(v))))
+			log.action("  | %s = %s", k, escape_unprintable(tostring(v)))
 		end
 	end
 end
@@ -207,7 +208,7 @@ function wayzone_utils.chunks_are_adjacent(cpos1, cpos2)
 	local dx = math.abs(cpos1.x - cpos2.x)
 	local dy = math.abs(cpos1.y - cpos2.y)
 	local dz = math.abs(cpos1.z - cpos2.z)
-	--minetest.log("action", string.format("  dx=%d dy=%d dz=%d", dx, dy, dz))
+	--log.action("  dx=%d dy=%d dz=%d", dx, dy, dz)
 	return (dx + dy + dz) <= wayzone.chunk_size
 end
 

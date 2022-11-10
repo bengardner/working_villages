@@ -4,6 +4,7 @@ A tool to display information about a node.
 local wayzone_utils = working_villages.require("wayzone_utils")
 local tree_scan = working_villages.require("tree_scan")
 local tool_name = "working_villages:query_tool"
+local log = working_villages.require("log")
 
 local function log_object(obj)
 	minetest.log("action",
@@ -91,7 +92,7 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 			wayzone_utils.log_table("query_tool: luaentity", ent)
 		end
 	else
-		minetest.log("action", string.format("query_tool: type=%s", pointed_thing.type))
+		log.action("query_tool: type=%s", pointed_thing.type)
 	end
 end
 
