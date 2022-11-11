@@ -28,12 +28,15 @@ function villager:count_inventory(groups)
 	local inv = self:get_inventory()
 
 	local grp_cnt = {}
+	for _, gname in ipairs(grp_cnt) do
+		grp_cnt[gname] = 0
+	end
 	for _, stack in pairs(inv:get_lists()) do
 		for _, istack in ipairs(stack) do
 			local node_name = istack:get_name()
 			for _, gname in ipairs(groups) do
 				if minetest.get_item_group(node_name, gname) > 0 then
-					grp_cnt[gname] = (grp_cnt[gname] or 0) + istack:get_count()
+					grp_cnt[gname] = grp_cnt[gname] + istack:get_count()
 				end
 			end
 		end
@@ -42,7 +45,7 @@ function villager:count_inventory(groups)
 end
 
 function villager:count_inventory_one(group_name)
-	return self:count_inventory({group_name})[group_name] or 0
+	return self:count_inventory({group_name})[group_name]
 end
 
 -- villager.get_job_name returns a name of a villager's current job.
@@ -809,6 +812,36 @@ end
 function villager:is_sleep_time()
 	local daytime = minetest.get_timeofday()
 	return (daytime < 0.2 or daytime > 0.8)
+end
+
+-- stop moving and set the animation to STAND
+function villager:stand_still()
+	self.object:set_velocity{x = 0, y = 0, z = 0}
+	self:set_animation(working_villages.animation_frames.STAND)
+end
+
+-- stop moving and set the animation to SIT
+function villager:sit_down()
+	self.object:set_velocity{x = 0, y = 0, z = 0}
+	self:set_animation(working_villages.animation_frames.SIT)
+end
+
+function villager:pick_random_location()
+	local start_pos = vector.round(self.object:get_pos())
+	-- pick a random reachable location
+	for _=1,10 do
+		local dx = math.random(-50, 50)
+		local dz = math.random(-50, 50)
+		local target_pos = vector.new(start_pos.x + dx, start_pos.y, start_pos.z + dz)
+
+		local pp = working_villages.nav:find_standable_y(target_pos, 10, 10)
+		if pp ~= nil and working_villages.nav:is_reachable(start_pos, pp) then
+			log.action("pick_random_location: %s", minetest.pos_to_string(pp))
+			return pp
+		end
+	end
+	log.action("pick_random_location: nil")
+	return nil
 end
 
 --------------------------------------------------------------------

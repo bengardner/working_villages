@@ -51,7 +51,9 @@ function wayzone_path.start(start_pos, target_pos, args)
 		minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
 		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name)
 
-	self.ss = wayzone_store.get(args)
+	args = args or {}
+	self.ss = args.store or wayzone_store.get(args)
+
 	-- other fields that show up later:
 	-- self.path = nil
 	-- self.path_idx = nil
@@ -77,7 +79,7 @@ function wayzone_path:next_goal(cur_pos)
 	local si = self.ss:get_pos_info(cur_pos, "next_goal.si")
 	-- Did we reach the goal?
 	if self.target_pos:inside(si.pos) then
-		log.action("next_goal: inside end_pos %s", minetest.pos_to_string(si.pos))
+		--log.action("next_goal: inside end_pos %s", minetest.pos_to_string(si.pos))
 		return nil
 	end
 
@@ -86,7 +88,7 @@ function wayzone_path:next_goal(cur_pos)
 		self.path_idx = (self.path_idx or 0) + 1
 		if self.path_idx <= #self.path then
 			local pp = self.path[self.path_idx]
-			log.action("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
+			--log.action("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
 			return pp
 		end
 	end
@@ -98,7 +100,7 @@ function wayzone_path:next_goal(cur_pos)
 	if si.wz == nil or di.wz == nil then
 		-- Oof. Someone must have placed a block over the target position
 		-- FIXME: if target_pos describes an area, we need to pick a different position in that area.
-		log.action("next_goal: si.wz or di.wz are nil, marking dest as dirty")
+		--log.action("next_goal: si.wz or di.wz are nil, marking dest as dirty")
 		self.ss:chunk_dirty(self.target_pos)
 		return nil, fail.no_path
 	end
@@ -120,7 +122,7 @@ function wayzone_path:next_goal(cur_pos)
 			return nil, fail.no_path
 		end
 		-- rebuild the path
-		log.action("calling wzpath_rebuild(%s)", minetest.pos_to_string(si.pos))
+		--log.action("calling wzpath_rebuild(%s)", minetest.pos_to_string(si.pos))
 		self.wzpath_idx = 0
 
 		local time_start = minetest.get_us_time()
@@ -178,9 +180,9 @@ function wayzone_path:next_goal(cur_pos)
 
 	-- bound the search area to the one or two wayzones
 	wayzone.outside_wz(target_area, { si.wz, next_wz })
-	for _, wz in ipairs(target_area.wz_ok) do
-		log.action(" find_path wz_ok: %s", wz.key)
-	end
+	--for _, wz in ipairs(target_area.wz_ok) do
+	--	log.action(" find_path wz_ok: %s", wz.key)
+	--end
 
 	-- find the path using the good old A* node pathfinder
 	self.path = pathfinder.find_path(si.pos, target_area, nil, {want_nil=true})
@@ -197,7 +199,7 @@ function wayzone_path:next_goal(cur_pos)
 			minetest.pos_to_string(self.target_pos), #self.path)
 		self.path_idx = 1
 		local pp = self.path[1]
-		log.action("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
+		--log.action("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
 		return pp
 	end
 	log.action("next_goal: empty path")

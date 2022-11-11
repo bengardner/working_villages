@@ -695,6 +695,29 @@ end
 
 -------------------------------------------------------------------------------
 
+-- scan for the first position in a wayzone going from pos.y and then down
+-- both @up_y and @down_y should be positive
+function wayzone_store:find_standable_y(pos, up_y, down_y)
+	local function check_pos(xxpos)
+		local wzc = self:chunk_get_by_pos(xxpos)
+		return (wzc ~= nil) and (wzc:get_wayzone_for_pos(xxpos) ~= nil)
+	end
+	local pp = vector.new(pos)
+	for dy = 0, up_y do
+		pp.y = pos.y + dy
+		if check_pos(pp) then
+			return pp
+		end
+	end
+	for dy = 1, down_y do
+		pp.y = pos.y - dy
+		if check_pos(pp) then
+			return pp
+		end
+	end
+	return nil
+end
+
 --[[
 Find a standable positions (using the wayzone stuff) around @target_pos.
 @target_pos is the position to search.
@@ -782,6 +805,14 @@ function wayzone_store:find_standable_near(target_pos, radius, start_pos)
 		end
 	end
 	return best_pos
+end
+
+function wayzone_store:is_reachable(start_pos, target_pos)
+	log.action("wayzone_store:is_reachable: start=%s target=%s",
+		minetest.pos_to_string(start_pos),
+		minetest.pos_to_string(target_pos))
+	local wzpath = self:find_path(start_pos, target_pos)
+	return wzpath ~= nil
 end
 
 -------------------------------------------------------------------------------

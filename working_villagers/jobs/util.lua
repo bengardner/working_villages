@@ -2,75 +2,76 @@ local func = {}
 local pathfinder = working_villages.require("pathfinder")
 local log = working_villages.require("log")
 
-function func.find_path_toward(pos,villager)
-  local dest = vector.round(pos)
-  --TODO: spiral outward from pos and try to find reverse paths
-  if func.walkable_pos(dest) then
-    dest = pathfinder.get_ground_level(dest)
-  end
-  local val_pos = func.validate_pos(villager.object:get_pos())
-  --FIXME: this also reverses jump height and fear height
-  local _,rev = pathfinder.find_path(dest, val_pos, villager)
-  return rev
+function func.find_path_toward(pos, villager)
+	local dest = vector.round(pos)
+	--TODO: spiral outward from pos and try to find reverse paths
+	if func.walkable_pos(dest) then
+		dest = pathfinder.get_ground_level(dest)
+	end
+	local val_pos = func.validate_pos(villager.object:get_pos())
+	--FIXME: this also reverses jump height and fear height
+	local _, rev = pathfinder.find_path(dest, val_pos, villager)
+	return rev
 end
 
 --TODO:this is used as a workaround
 -- it has to be replaced by routing
 --  to the nearest possible position
 function func.find_ground_below(position)
-  local pos = vector.new(position)
-  local height = 0
-  local node
-  repeat
-      height = height + 1
-      pos.y = pos.y - 1
-      node = minetest.get_node(pos)
-      if height > 10 then
-        return false
-      end
-  until pathfinder.walkable(node)
-  pos.y = pos.y + 1
-  return pos
+	local pos = vector.new(position)
+	local height = 0
+	local node
+	repeat
+		height = height + 1
+		pos.y = pos.y - 1
+		node = minetest.get_node(pos)
+		if height > 10 then
+			return false
+		end
+	until pathfinder.walkable(node)
+	pos.y = pos.y + 1
+	return pos
 end
 
 function func.validate_pos(pos)
-  local resultp = vector.round(pos)
-  local node = minetest.get_node(resultp)
-  if minetest.registered_nodes[node.name].walkable then
-    resultp = vector.subtract(pos, resultp)
-    resultp = vector.round(resultp)
-    resultp = vector.add(pos, resultp)
-    return vector.round(resultp)
-  else
-    return resultp
-  end
+	local resultp = vector.round(pos)
+	local node = minetest.get_node(resultp)
+	if minetest.registered_nodes[node.name].walkable then
+		resultp = vector.subtract(pos, resultp)
+		resultp = vector.round(resultp)
+		resultp = vector.add(pos, resultp)
+		return vector.round(resultp)
+	else
+		return resultp
+	end
 end
 
 --TODO: look in pathfinder whether defining this is even nessecary
 -- Checks to see if a MOB can stand in the location.
 function func.clear_pos(pos)
-	local node=minetest.get_node(pos)
-	local above_node=minetest.get_node(vector.new(pos.x,pos.y+1,pos.z))
-	return not(pathfinder.is_node_collidable(node) or pathfinder.is_node_collidable(above_node))
+	local node = minetest.get_node(pos)
+	local above_node = minetest.get_node(vector.new(pos.x, pos.y + 1, pos.z))
+	return not (pathfinder.is_node_collidable(node) or pathfinder.is_node_collidable(above_node))
 end
 
 function func.walkable_pos(pos)
-	local node=minetest.get_node(pos)
+	local node = minetest.get_node(pos)
 	return pathfinder.walkable(node)
 end
 
 function func.find_adjacent_clear(pos)
-  if not pos then error("didn't get a position") end
-	local found = func.find_adjacent_pos(pos,func.clear_pos)
-	if found~=false then
+	if not pos then
+		error("didn't get a position")
+	end
+	local found = func.find_adjacent_pos(pos, func.clear_pos)
+	if found ~= false then
 		return found
 	end
-	found = vector.new(pos.x, pos.y-2, pos.z)
+	found = vector.new(pos.x, pos.y - 2, pos.z)
 	if func.clear_pos(found) then
 		return found
 	end
 	return false
-
 end
 
 local find_adjacent_clear = func.find_adjacent_clear
@@ -95,10 +96,12 @@ local function search_surrounding(pos, pred, searching_range, caller_state)
 	local ret = {}
 
 	local function check_column(dx, dz)
-		if ret.pos ~= nil then return end
+		if ret.pos ~= nil then
+			return
+		end
 		for j = mod_y - searching_range.y, searching_range.y do
 			local p = vector.add({x = dx, y = j, z = dz}, pos)
-			if pred(p, caller_state) and find_adjacent_clear(p)~=false then
+			if pred(p, caller_state) and find_adjacent_clear(p) ~= false then
 				ret.pos = p
 				return
 			end
@@ -160,7 +163,9 @@ local function iterate_surrounding_xz(pos, searching_range, func, state)
 	local ret = {}
 
 	local function check_column(dx, dz, rad)
-		if ret.pos ~= nil then return end
+		if ret.pos ~= nil then
+			return
+		end
 		--log.action("check x=%d z=%d r=%d", dx, dz, rad)
 		local cpos = vector.new(pos.x + dx, pos.y, pos.z + dz)
 		if func(cpos, state, rad) then
@@ -209,12 +214,12 @@ func.iterate_surrounding_xz = iterate_surrounding_xz
 
 -- defines the 6 adjacent positions
 local adjacent_pos = {
-	vector.new( 0, 1, 0),
-	vector.new( 0,-1, 0),
-	vector.new( 1, 0, 0),
+	vector.new(0, 1, 0),
+	vector.new(0, -1, 0),
+	vector.new(1, 0, 0),
 	vector.new(-1, 0, 0),
-	vector.new( 0, 0, 1),
-	vector.new( 0, 0,-1),
+	vector.new(0, 0, 1),
+	vector.new(0, 0, -1)
 }
 
 -- Check the position and the six adjacent positions
@@ -233,82 +238,113 @@ end
 
 -- Activating owner griefing settings departs from the documented behavior
 -- of the protection system, and may break some protection mods.
-local owner_griefing = minetest.settings:get(
-    "working_villages_owner_protection")
+local owner_griefing = minetest.settings:get("working_villages_owner_protection")
 local owner_griefing_lc = owner_griefing and string.lower(owner_griefing)
 
 if not owner_griefing or owner_griefing_lc == "false" then
-    -- Villagers may not grief in protected areas.
-    func.is_protected_owner = function(_, pos) -- (owner, pos)
-        return minetest.is_protected(pos, "")
-    end
-
-else if owner_griefing_lc == "true" then
-    -- Villagers may grief in areas protected by the owner.
-    func.is_protected_owner = function(owner, pos)
-        local myowner = owner or ""
-        if myowner == "working_villages:self_employed" then
-            myowner = ""
-        end
-        return minetest.is_protected(pos, myowner)
-    end
-
-else if owner_griefing_lc == "ignore" then
-    -- Villagers ignore protected areas.
-    func.is_protected_owner = function() return false end
-
+	-- Villagers may not grief in protected areas.
+	func.is_protected_owner = function(_, pos) -- (owner, pos)
+		return minetest.is_protected(pos, "")
+	end
 else
-    -- Villagers may grief in areas where "[owner_protection]:[owner_name]" is allowed.
-    -- This makes sense with protection mods that grant permission to
-    -- arbitrary "player names."
-    func.is_protected_owner = function(owner, pos)
-        local myowner = owner or ""
-        if myowner == "" then
-            myowner = ""
-        else
-            myowner = owner_griefing..":"..myowner
-        end
-        return minetest.is_protected(pos, myowner)
-    end
+	if owner_griefing_lc == "true" then
+		-- Villagers may grief in areas protected by the owner.
+		func.is_protected_owner = function(owner, pos)
+			local myowner = owner or ""
+			if myowner == "working_villages:self_employed" then
+				myowner = ""
+			end
+			return minetest.is_protected(pos, myowner)
+		end
+	else
+		if owner_griefing_lc == "ignore" then
+			-- Villagers ignore protected areas.
+			func.is_protected_owner = function()
+				return false
+			end
+		else
+			-- Villagers may grief in areas where "[owner_protection]:[owner_name]" is allowed.
+			-- This makes sense with protection mods that grant permission to
+			-- arbitrary "player names."
+			func.is_protected_owner = function(owner, pos)
+				local myowner = owner or ""
+				if myowner == "" then
+					myowner = ""
+				else
+					myowner = owner_griefing .. ":" .. myowner
+				end
+				return minetest.is_protected(pos, myowner)
+			end
 
-    -- Patch areas to support this extension
-    local prefixlen = #owner_griefing
-    local areas = rawget(_G, "areas")
-    if areas then
-        local areas_player_exists = areas.player_exists
-        function areas.player_exists(area, name)
-            local myname = name
-            if string.sub(name,prefixlen+1,prefixlen+1) == ":"
-                    and string.sub(name,prefixlen+2)
-                    and string.sub(name,1,prefixlen) == owner_griefing then
-                myname = string.sub(name,prefixlen+2)
-                if myname == "working_villages:self_employed" then
-                    return true
-                end
-            end
-            return areas_player_exists(area, myname)
-        end
-    end
-end end end -- else else else
+			-- Patch areas to support this extension
+			local prefixlen = #owner_griefing
+			local areas = rawget(_G, "areas")
+			if areas then
+				local areas_player_exists = areas.player_exists
+				function areas.player_exists(area, name)
+					local myname = name
+					if string.sub(name, prefixlen + 1, prefixlen + 1) == ":" and string.sub(name, prefixlen + 2) and
+						string.sub(name, 1, prefixlen) == owner_griefing
+					 then
+						myname = string.sub(name, prefixlen + 2)
+						if myname == "working_villages:self_employed" then
+							return true
+						end
+					end
+					return areas_player_exists(area, myname)
+				end
+			end
+		end
+	end
+end -- else else else
 
 function func.is_protected(self, pos)
-    return func.is_protected_owner(self.owner_name, pos)
+	return func.is_protected_owner(self.owner_name, pos)
 end
 
 -- chest manipulation support functions
 function func.is_chest(pos)
-	local node = minetest.get_node(pos)
-  if (node==nil) then
-    return false;
-  end
-  if node.name=="default:chest" then
-    return true;
-  end
-  local is_chest = minetest.get_item_group(node.name, "chest");
-  if (is_chest~=0) then
-    return true;
-  end
-  return false;
+	local node = minetest.get_node_or_nil(pos)
+	if node == nil then
+		return false
+	end
+	if node.name == "default:chest" then
+		return true
+	end
+	return (minetest.get_item_group(node.name, "chest") > 0)
+end
+
+--[[
+Pick an item from the 'readonly' array.
+If you change the array, remove 'total_weight' from the table.
+The value should be a table with a 'weight' field. Default 1.
+weight must be an integer
+returns the selected item
+]]
+function func.pick_random(tab)
+	-- calculate the total_weight on the first call
+	if tab.total_weight == nil then
+		local total_weight = 0
+		for _, val in ipairs(tab) do
+			total_weight = total_weight + (val.weight or 1)
+		end
+		tab.total_weight = total_weight
+	end
+
+	-- pick an entry
+	if tab.total_weight > 0 then
+		local sel = math.random(1, tab.total_weight)
+		log.action("pick_random: total_weight=%s sel=%s", tostring(tab.total_weight), tostring(sel))
+		for idx, val in ipairs(tab) do
+			local w = (val.weight or 1)
+			if sel <= w then
+				log.warning("pick_random: returning entry %d", idx)
+				return val
+			end
+			sel = sel - w
+		end
+	end
+	return nil
 end
 
 return func

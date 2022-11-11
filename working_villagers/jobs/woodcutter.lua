@@ -217,7 +217,7 @@ local function task_plant_saplings(self)
 			return true
 		end
 
-		log.action("plant sap @ %s", minetest.pos_to_string(target))
+		log.action("plant sapling @ %s", minetest.pos_to_string(target))
 
 		-- local destination = func.find_adjacent_clear(target)
 		-- if destination==false then
@@ -349,8 +349,14 @@ local function task_store_in_chest(self)
 		self.pos_data.chest_pos = target
 	end
 
+	if not func.is_chest(chest_pos) and minetest.get_node_or_nil(chest_pos) ~= nil then
+		-- chest was removed...
+		self.pos_data.chest_pos = ""
+	end
+
 	self.job_data.manipulated_chest = false
-	log.action("calling handle_chest @ %s, handled=%s", minetest.pos_to_string(self.pos_data.chest_pos), tostring(self.job_data.manipulated_chest))
+	log.action("calling handle_chest @ %s, handled=%s",
+		minetest.pos_to_string(self.pos_data.chest_pos), tostring(self.job_data.manipulated_chest))
 	self:handle_chest(take_func, put_func)
 	-- Do I own a chest? go to it. deposit.
 	-- Am I part of a village? it there a village chest? go to it. deposit.
@@ -361,25 +367,24 @@ working_villages.register_task("store_in_chest", { func = task_store_in_chest, p
 
 --
 local function check_woodcutter(self)
+	-- only add the tasks if the active priority is lower than 30
 	if (self.task.priority or 0) < 30 then
 		self:count_timer("woodcutter:search")
 		if self:timer_exceeded("woodcutter:search", 60) then
 			local grp_cnt = self:count_inventory({"tree", "sapling"})
-			local sap_cnt = grp_cnt["sapling"] or 0
-			local log_cnt = grp_cnt["tree"] or 0
-			if sap_cnt < 16 then
+			if grp_cnt.sapling < 16 then
 				self:task_add("gather_saplings")
 			end
-			if sap_cnt > 0 then
+			if grp_cnt.sapling > 0 then
 				self:task_add("plant_saplings")
 			end
-			if log_cnt < 50 then
+			if grp_cnt.tree < 50 then
 				self:task_add("chop_tree")
 			end
+			if grp_cnt.tree >= 50 then
+				self:task_add("store_in_chest")
+			end
 		end
-		--if not self.job_data.manipulated_chest and log_cnt > 10 then
-			self:task_add("store_in_chest")
-		--end
 	end
 end
 
@@ -510,7 +515,7 @@ local function woodcutter_logic(self)
 	check_night(self)
 
 	-- custom woodcutter tasks
-	check_woodcutter(self)
+	--check_woodcutter(self)
 
 	-- make sure the idle task is present
 	check_idle(self)
