@@ -263,7 +263,8 @@ function working_villages.register_villager(product_name, def)
 					local job_name = stack:get_name()
 					local job = working_villages.registered_jobs[job_name]
 					if type(job.logic)=="function" then
-						-- do nothing here
+						log.warning("Set job %s", job_name)
+						self.logic = job.logic
 					elseif type(job.on_start)=="function" then
 						job.on_start(self)
 						self.job_thread = coroutine.create(job.on_step)
@@ -297,7 +298,8 @@ function working_villages.register_villager(product_name, def)
 					self.time_counters = {}
 					if job then
 						if type(job.logic)=="function" then
-							-- do nothing
+							log.warning("Set job %s", job_name)
+							self.logic = job.logic
 						elseif type(job.on_stop)=="function" then
 							job.on_stop(self)
 						elseif type(job.jobfunc)=="function" then
@@ -324,6 +326,8 @@ function working_villages.register_villager(product_name, def)
 
 					if to_list == "job" then
 						if type(job.logic)=="function" then
+							log.warning("Set job %s", job_name)
+							self.logic = job.logic
 							self:task_clear()
 						elseif type(job.on_start)=="function" then
 							job.on_start(self)
@@ -333,6 +337,8 @@ function working_villages.register_villager(product_name, def)
 						end
 					elseif from_list == "job" then
 						if type(job.logic)=="function" then
+							log.warning("Set job %s", job_name)
+							self.logic = job.logic
 							self:task_clear()
 						elseif type(job.on_stop)=="function" then
 							job.on_stop(self)
@@ -438,6 +444,7 @@ function working_villages.register_villager(product_name, def)
 		local job = self:get_job()
 		if job ~= nil then
 			if type(job.logic)=="function" then
+				self.logic = job.logic
 				self:task_clear()
 			elseif type(job.on_start)=="function" then
 				job.on_start(self)
@@ -491,10 +498,13 @@ function working_villages.register_villager(product_name, def)
 		self:handle_liquids()
 
 		-- pickup surrounding item.
-		self:pickup_item()
+		self:pickup_items()
 
 		if self.pause then
 			return
+		end
+		if self.logic ~= nil then
+			self.logic(self)
 		end
 		self:task_execute(dtime)
 		--job_coroutines.resume(self,dtime)

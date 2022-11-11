@@ -1,5 +1,6 @@
 local func = {}
 local pathfinder = working_villages.require("pathfinder")
+local log = working_villages.require("log")
 
 function func.find_path_toward(pos,villager)
   local dest = vector.round(pos)
@@ -76,6 +77,7 @@ local find_adjacent_clear = func.find_adjacent_clear
 
 -- search in an expanding box around pos in the XZ plane
 -- first hit would be closest
+-- TODO: rework to use iterate_surrounding_xz()
 local function search_surrounding(pos, pred, searching_range, caller_state)
 	pos = vector.round(pos)
 	local max_xz = math.max(searching_range.x, searching_range.z)
@@ -103,6 +105,7 @@ local function search_surrounding(pos, pred, searching_range, caller_state)
 		end
 	end
 
+	-- "i" is the radius
 	for i = 0, max_xz do
 		for k = 0, i do
 			-- hit the 8 points of symmetry, bound check and skip duplicates
@@ -140,6 +143,69 @@ local function search_surrounding(pos, pred, searching_range, caller_state)
 end
 
 func.search_surrounding = search_surrounding
+
+--[[
+Iterate node positions in an expanding box around pos in the XZ plane.
+Returns the first position for which func returns true.
+
+@pos is the start position, first called on that position
+@search_range contains the radius for each axis. only x and z are used.
+@func is called on each as func(pos, state). If func() returns true, we stop and
+  return that position.
+@state passed as the second parameter to func (might be nil)
+]]
+local function iterate_surrounding_xz(pos, searching_range, func, state)
+	pos = vector.round(pos)
+	local max_xz = math.max(searching_range.x, searching_range.z)
+	local ret = {}
+
+	local function check_column(dx, dz, rad)
+		if ret.pos ~= nil then return end
+		--log.action("check x=%d z=%d r=%d", dx, dz, rad)
+		local cpos = vector.new(pos.x + dx, pos.y, pos.z + dz)
+		if func(cpos, state, rad) then
+			ret.pos = cpos
+		end
+	end
+
+	-- "i" is the radius
+	for i = 0, max_xz do
+		for k = 0, i do
+			-- hit the 8 points of symmetry, bound check and skip duplicates
+			if k <= searching_range.x and i <= searching_range.z then
+				check_column(k, i, i)
+				if i > 0 then
+					check_column(k, -i, i)
+				end
+				if k > 0 then
+					check_column(-k, i, i)
+					if k ~= i then
+						check_column(-k, -i, i)
+					end
+				end
+			end
+
+			if i <= searching_range.x and k <= searching_range.z then
+				if i > 0 then
+					check_column(-i, k, i)
+				end
+				if k ~= i then
+					check_column(i, k, i)
+					if k > 0 then
+						check_column(-i, -k, i)
+						check_column(i, -k, i)
+					end
+				end
+			end
+			if ret.pos ~= nil then
+				break
+			end
+		end
+	end
+	return ret.pos
+end
+
+func.iterate_surrounding_xz = iterate_surrounding_xz
 
 -- defines the 6 adjacent positions
 local adjacent_pos = {

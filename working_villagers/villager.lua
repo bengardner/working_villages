@@ -19,6 +19,32 @@ function villager:get_inventory()
 	}
 end
 
+--[[
+Add up all the inventory items by group for the list of groups.
+For example, the woodcutter would want { "tree", "sapling" } to see if
+it over the carry limit.
+]]
+function villager:count_inventory(groups)
+	local inv = self:get_inventory()
+
+	local grp_cnt = {}
+	for _, stack in pairs(inv:get_lists()) do
+		for _, istack in ipairs(stack) do
+			local node_name = istack:get_name()
+			for _, gname in ipairs(groups) do
+				if minetest.get_item_group(node_name, gname) > 0 then
+					grp_cnt[gname] = (grp_cnt[gname] or 0) + istack:get_count()
+				end
+			end
+		end
+	end
+	return grp_cnt
+end
+
+function villager:count_inventory_one(group_name)
+	return self:count_inventory({group_name})[group_name] or 0
+end
+
 -- villager.get_job_name returns a name of a villager's current job.
 function villager:get_job_name()
 	local inv = self:get_inventory()
@@ -110,8 +136,8 @@ function villager:get_nearest_item_by_condition(cond, range_distance)
 		if not object:is_player() and object:get_luaentity() and object:get_luaentity().name == "__builtin:item" then
 			local found_item = ItemStack(object:get_luaentity().itemstring):to_table()
 			if found_item then
-				if cond(found_item) then
-					local item_position = object:get_pos()
+				local item_position = object:get_pos()
+				if cond(found_item, item_position) then
 					local distance = vector.distance(position, item_position)
 
 					if distance < min_distance then
@@ -140,7 +166,7 @@ function villager:get_items_by_condition(cond, range_distance)
 	for _, object in pairs(all_objects) do
 		if not object:is_player() and object:get_luaentity() and object:get_luaentity().name == "__builtin:item" then
 			local found_item = ItemStack(object:get_luaentity().itemstring):to_table()
-			if found_item ~= nil and cond(found_item) then
+			if found_item ~= nil and cond(found_item, object:get_pos()) then
 				table.insert(items, object)
 			end
 		end
@@ -542,17 +568,14 @@ function villager:handle_obstacles(ignore_fence, ignore_doors)
 end
 
 -- villager.pickup_item pickup items placed and put it to main slot.
-function villager:pickup_item()
-	local pos = self.object:get_pos()
-	local radius = 1.0
-	local all_objects = minetest.get_objects_inside_radius(pos, radius)
-
-	for _, obj in ipairs(all_objects) do
-		if not obj:is_player() and obj:get_luaentity() and obj:get_luaentity().itemstring then
-			local itemstring = obj:get_luaentity().itemstring
-			local stack = ItemStack(itemstring)
-			if stack and stack:to_table() then
-				local name = stack:to_table().name
+function villager:pickup_item(obj)
+	if not obj:is_player() and obj:get_luaentity() and obj:get_luaentity().itemstring then
+		local itemstring = obj:get_luaentity().itemstring
+		local stack = ItemStack(itemstring)
+		if stack ~= nil then
+			local tab = stack:to_table()
+			if tab ~= nil  then
+				local name = tab.name
 
 				if minetest.registered_items[name] ~= nil then
 					local inv = self:get_inventory()
@@ -564,6 +587,17 @@ function villager:pickup_item()
 				end
 			end
 		end
+	end
+end
+
+-- villager.pickup_item pickup items placed and put it to main slot.
+function villager:pickup_items()
+	local pos = self.object:get_pos()
+	local radius = 1.0
+	local all_objects = minetest.get_objects_inside_radius(pos, radius)
+
+	for _, obj in ipairs(all_objects) do
+		self:pickup_item(obj)
 	end
 end
 
@@ -698,14 +732,16 @@ end
 function villager:task_del(name, reason)
 	local info = self.task_queue[name]
 	if info ~= nil then
-		log.action("%s: removed task %s priority %d %s",
+		log.action("%s: removed task %s priority %d reason=%s",
 			self.product_name, info.name, info.priority, reason)
 		self.task_queue[name] = nil
 	end
 end
 
--- clear all tasks, making the villager stupid for a tick
--- the logic() function will add something.
+--[[ Clear all tasks, making the villager stupid for a tick
+the logic() function should add something on the next tick.
+This is mainly useful when changing jobs externally.
+]]
 function villager:task_clear()
 	self.task_queue = {}
 end
@@ -718,10 +754,6 @@ function villager:task_best()
 			best_info = info
 		end
 	end
-	-- FIXME: the idle task should be added by logic()
-	if best_info == nil then
-		best_info = working_villages.registered_tasks["idle"]
-	end
 	return best_info
 end
 
@@ -730,8 +762,9 @@ function villager:task_execute(dtime)
 	local best = self:task_best()
 	-- Does the coroutine exist?
 	if self.task.thread ~= nil then
+		local co = self.task.thread
 		-- Clean up dead task or cancel no-longer-best task
-		if coroutine.status(self.task.thread) == "dead" then
+		if coroutine.status(co) == "dead" then
 			-- Remove the task from the queue if it returned true
 			if self.task.ret == true then
 				self:task_del(self.task.name, "complete")
@@ -739,7 +772,9 @@ function villager:task_execute(dtime)
 			self.task = {}
 			best = self:task_best()
 		elseif best == nil or best.name ~= self.task.name then
-			coroutine.close(self.task.thread)
+			if coroutine.close ~= nil then
+				coroutine.close(co)
+			end
 			self.task = {}
 			best = self:task_best()
 		end
@@ -759,7 +794,8 @@ function villager:task_execute(dtime)
 			if ret[1] == true then
 				self.task.ret = ret[2]
 			else
-				log.warning("task %s failed: %s", self.task.name, tostring(ret[2]))
+				error("error in job_thread " .. ret[2]..": "..debug.traceback(self.task.thread))
+				--log.warning("task %s failed: %s", self.task.name, tostring(ret[2]))
 				-- remove it from the queue
 				self:task_del(self.task.name, "failed")
 			end
@@ -772,7 +808,7 @@ end
 -- but for now, just dawn-to-dusk.
 function villager:is_sleep_time()
 	local daytime = minetest.get_timeofday()
-	return (daytime < 0.2 or daytime > 0.805)
+	return (daytime < 0.2 or daytime > 0.8)
 end
 
 --------------------------------------------------------------------

@@ -157,20 +157,24 @@ It will try really hard to move to @pos.
 If it can't get within @radius+1 of dest_pos, then this will fail.
 ]]
 function working_villages.villager:go_to(dest_pos, dest_radius, dest_height)
-	local target_pos = pathfinder.get_neighbor_ground_level(dest_pos)
+	if dest_height ~= nil and dest_height < 1 then
+		dest_height = 1
+	end
+	if dest_radius == nil or dest_radius < 1 then
+		dest_radius = 1
+	end
+
+	-- find a real position nearby the target
+	local target_pos = working_villages.nav:find_standable_near(dest_pos, 3, self.object:get_pos())
+	--local target_pos = pathfinder.get_neighbor_ground_level(dest_pos)
 	if target_pos == nil then
-		log.warning("go_to: did not find ground for %s", minetest.pos_to_string(dest_pos))
+		log.warning("go_to: not valid ground for %s", minetest.pos_to_string(dest_pos))
 		return false, fail.no_path
 	end
 	log.action("go_to: %s => ground %s",
 		minetest.pos_to_string(dest_pos), minetest.pos_to_string(target_pos))
+
 	-- dest_radius must be at least 1
-	if dest_radius == nil or dest_radius < 1 then
-		dest_radius = 1
-	end
-	if dest_height ~= nil and dest_height < 1 then
-		dest_height = 1
-	end
 	local function close_enough()
 		local d = vector.distance(self.object:get_pos(), dest_pos)
 		return d <= dest_radius + 1
@@ -199,7 +203,7 @@ function working_villages.villager:collect_nearest_item_by_condition(cond, searc
 	local inv=self:get_inventory()
 	if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
 		self:go_to(pos)
-		self:pickup_item()
+		self:pickup_item(item)
 	end
 end
 
@@ -219,28 +223,43 @@ function working_villages.villager:collect_nearby_items_by_condition(cond, searc
 		end
 		log.action("  +++ %d items left", #items)
 		for i, x in ipairs(items) do
-			log.action("  +++ [%d] %s %d", i,
+			local xp = x:get_pos()
+			if xp ~= nil then
+				log.action("  +++ [%d] %s %d", i,
 					minetest.pos_to_string(x:get_pos()),
 					vector.distance(my_pos, x:get_pos()))
+			end
 		end
 		local item = items[#items]
 		table.remove(items)
 		local pos = item:get_pos()
-		local rpos = vector.round(pos)
+		if pos ~= nil then
+			local rpos = vector.round(pos)
 
-		--print("collecting item at:".. minetest.pos_to_string(pos))
-		local inv = self:get_inventory()
-
-		if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
-			log.action("Collecting %s @ %s %s",
-				item:get_luaentity().itemstring,
-				minetest.pos_to_string(pos),
-				minetest.pos_to_string(rpos))
-			local ret, msg = self:go_to(rpos)
-			if ret ~= true then
-				log.action(" -- go_to fail %s", msg)
+			if working_villages.failed_pos_test(rpos) then
+				log.action("skipping previously failed pos %s", minetest.pos_to_string(rpos))
 			else
-				self:pickup_item()
+				local stand_pos = working_villages.nav:find_standable_near(rpos, {x=1, y=2, z=1})
+				if stand_pos == nil then
+					log.action("no stand_pos around %s", minetest.pos_to_string(rpos))
+					working_villages.failed_pos_record(rpos)
+				else
+					log.action("collecting item at: %s", minetest.pos_to_string(pos))
+					local inv = self:get_inventory()
+
+					if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
+						log.action("Collecting %s @ %s stand=%s",
+							item:get_luaentity().itemstring,
+							minetest.pos_to_string(pos),
+							minetest.pos_to_string(stand_pos))
+						local ret, msg = self:go_to(stand_pos)
+						if ret ~= true then
+							log.action(" -- go_to fail %s", msg)
+						else
+							self:pickup_item(item)
+						end
+					end
+				end
 			end
 		end
 	end
@@ -248,8 +267,15 @@ function working_villages.villager:collect_nearby_items_by_condition(cond, searc
 end
 
 -- delay the async action by @step_count steps
-function working_villages.villager:delay(step_count)
-	for _=0,step_count do
+function working_villages.villager:delay_steps(step_count)
+	for _=0, step_count do
+		coroutine.yield()
+	end
+end
+
+function working_villages.villager:delay_seconds(seconds)
+	local end_clock = os.clock() + seconds
+	while os.clock() < end_clock do
 		coroutine.yield()
 	end
 end
@@ -340,7 +366,7 @@ function working_villages.villager:place(item,pos)
 	end
 	local destnode = minetest.get_node(pos)
 	if not minetest.registered_nodes[destnode.name].buildable_to then
-	 return false, fail.blocked
+		return false, fail.blocked
 	end
 	local find_item = function(name)
 		if type(item)=="string" then
@@ -357,7 +383,7 @@ function working_villages.villager:place(item,pos)
 	local wield_stack = self:get_wield_item_stack()
 	--move item to wield
 	if not (find_item(wield_stack:get_name()) or self:move_main_to_wield(find_item)) then
-	 return false, fail.not_in_inventory
+		return false, fail.not_in_inventory
 	end
 	--set animation
 	if self.object:get_velocity().x==0 and self.object:get_velocity().z==0 then
@@ -463,7 +489,7 @@ function working_villages.villager:manipulate_chest(chest_pos, take_func, put_fu
 			end
 		end
 	else
-		log.error("Villager %s doe's not find cheston position %s.", self.inventory_name, minetest.pos_to_string(chest_pos))
+		log.error("Villager %s does not find chest on position %s.", self.inventory_name, minetest.pos_to_string(chest_pos))
 	end
 end
 

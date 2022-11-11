@@ -38,6 +38,7 @@ to check for clearance.
 ]]--
 local S = minetest.get_translator("pathfinder")
 
+local log = working_villages.require("log")
 local sorted_hash = working_villages.require("sorted_hash")
 
 local pathfinder = {}
@@ -1383,17 +1384,17 @@ function pathfinder.can_stand_at(pos, height)
 	end
 
 	local below = vector.new(pos.x, pos.y-1, pos.z)
-	local node = minetest.get_node_or_nil(below)
-	while node ~= nil and is_node_clear(node) == true do
-		below.y = below.y - 1
-		node = minetest.get_node_or_nil(below)
-	end
-	if node == nil then
-		return false
-	end
-	below.y = below.y + 1
+	--local node = minetest.get_node_or_nil(below)
+	--while node ~= nil and is_node_clear(node) == true do
+	--	below.y = below.y - 1
+	--	node = minetest.get_node_or_nil(below)
+	--end
+	--if node == nil then
+	--	return false
+	--end
+	--below.y = below.y + 1
 	if not pathfinder.is_node_standable(below) then
-		node = minetest.get_node_or_nil(below)
+		local node = minetest.get_node_or_nil(below)
 		local nodedef = minetest.registered_nodes[node.name]
 
 		local s = {}

@@ -45,6 +45,7 @@ local sorted_hash = working_villages.require("sorted_hash")
 local wayzone_utils = working_villages.require("wayzone_utils")
 local fail = working_villages.require("failures")
 local log = working_villages.require("log")
+local func = working_villages.require("jobs/util")
 
 local wayzone_store = {}
 
@@ -93,7 +94,7 @@ function wayzone_store.get(args)
 	self.chunks = {}
 	self = setmetatable(self, { __index = wayzone_store })
 	wayzone_store.stores[self.key] = self
-	minetest.log("warning", string.format("wayzone_store: created %s", self.key))
+	log.warning("wayzone_store: created %s", self.key)
 	return self
 end
 
@@ -109,27 +110,24 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 	-- No point in looking at self-links if there are less than 2 wayzones OR
 	-- either wayzone chunk is empty (under gound).
 	if (from_wzc.hash == to_wzc.hash and #from_wzc < 2) or #from_wzc == 0 or #to_wzc == 0 then
-		minetest.log("action",
-			string.format("wayzones_refresh_links: no point %x (%d) g=%d -> %x (%d) g=%d",
-				from_wzc.hash, #from_wzc, from_wzc.generation,
-				to_wzc.hash, #to_wzc, to_wzc.generation))
+		log.action("wayzones_refresh_links: no point %x (%d) g=%d -> %x (%d) g=%d",
+			from_wzc.hash, #from_wzc, from_wzc.generation,
+			to_wzc.hash, #to_wzc, to_wzc.generation)
 		return
 	end
 
 	-- Did we already update the links for the current gen?
 	-- nil won't match a number if this is the first time.
 	if from_wzc:gen_is_current(to_wzc) then
-		minetest.log("action",
-			string.format("wayzones_refresh_links: already updated  %x (%d) g=%d -> %x (%d) g=%d",
-				from_wzc.hash, #from_wzc, from_wzc.generation,
-				to_wzc.hash, #to_wzc, to_wzc.generation))
+		log.action("wayzones_refresh_links: already updated  %x (%d) g=%d -> %x (%d) g=%d",
+			from_wzc.hash, #from_wzc, from_wzc.generation,
+			to_wzc.hash, #to_wzc, to_wzc.generation)
 		return
 	end
 
-	minetest.log("action",
-		string.format("wayzones_refresh_links: updating %x (%d) g=%d -> %x (%d) g=%d",
-			from_wzc.hash, #from_wzc, from_wzc.generation,
-			to_wzc.hash, #to_wzc, to_wzc.generation))
+	log.action("wayzones_refresh_links: updating %x (%d) g=%d -> %x (%d) g=%d",
+		from_wzc.hash, #from_wzc, from_wzc.generation,
+		to_wzc.hash, #to_wzc, to_wzc.generation)
 
 	-- clear existing links: from_wzc -> to_wzc
 	-- We don't care about incoming links, as we won't be using them.
@@ -144,9 +142,8 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 		for from_idx, from_wz in ipairs(from_wzc) do
 			-- don't link a wayzone to itself (save some CPU cycles of wasted effort)
 			if from_wz.key ~= to_wz.key then
-				--minetest.log("action",
-				--	string.format("wayzones_refresh_links: check %s -> %s",
-				--		from_wz.key, to_wz.key))
+				--log.action("wayzones_refresh_links: check %s -> %s",
+				--	from_wz.key, to_wz.key)
 				-- if from_wz exits into to_wz, then we have a winner
 				if from_wz:exited_to(to_wz) then
 					log.action(" + wayzone_link %s => %s g=%d",
@@ -279,10 +276,9 @@ local function process_chunk(self, chunk_hash)
 				for idx, exitstr in pairs(wz.exited) do
 					table.insert(aa, string.format("[%d]=%d", idx, #exitstr))
 				end
-				minetest.log("action",
-					string.format("++ wayzone %s cnt=%d center=%s box=%s,%s exit=%s", wz.key, wz.visited_count,
-						minetest.pos_to_string(wz.center_pos), minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp),
-						table.concat(aa, ",")))
+				log.action("++ wayzone %s cnt=%d center=%s box=%s,%s exit=%s", wz.key, wz.visited_count,
+					minetest.pos_to_string(wz.center_pos), minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp),
+					table.concat(aa, ","))
 			end
 		end
 	end
@@ -312,7 +308,7 @@ function wayzone_store:chunk_get_by_hash(hash, no_load)
 			wzc:mark_used()
 		end
 		if minetest.get_node_or_nil(wzc.pos) == nil then
-			minetest.log("warning", string.format("Chunk Loaded %x %s", wzc.hash, minetest.pos_to_string(wzc.pos)))
+			log.warning("Chunk Loaded %x %s", wzc.hash, minetest.pos_to_string(wzc.pos))
 			minetest.load_area(wzc.pos)
 		end
 		return wzc
@@ -322,7 +318,7 @@ function wayzone_store:chunk_get_by_hash(hash, no_load)
 	end
 	local pos = minetest.get_position_from_hash(hash)
 	if minetest.get_node_or_nil(pos) == nil then
-		minetest.log("warning", string.format("Chunk processed %x %s", hash, minetest.pos_to_string(pos)))
+		log.warning("Chunk processed %x %s", hash, minetest.pos_to_string(pos))
 		minetest.load_area(pos)
 	end
 	wzc = process_chunk(self, hash)
@@ -367,7 +363,7 @@ Mark the chunk as dirty if loaded.
 If the adjacent nodes are in a different chunk, then also mark that as dirty.
 ]]
 function wayzone_store:chunk_dirty(pos)
-	--minetest.log("warning", string.format("wayzone_store:chunk_dirty %s", minetest.pos_to_string(pos)))
+	--log.warning("wayzone_store:chunk_dirty %s", minetest.pos_to_string(pos))
 	-- get the chunk, but don't load it if missing or dirty
 	local hash_done = {}
 	local function dirty_neighbor(dx, dy, dz)
@@ -378,9 +374,9 @@ function wayzone_store:chunk_dirty(pos)
 			hash_done[chash] = true
 			local wzc = self:chunk_get_by_hash(chash, true)
 			if wzc ~= nil then
-				minetest.log("warning", string.format("wzc:mark_dirty %s : %s %x",
-						minetest.pos_to_string(pos),
-						minetest.pos_to_string(wzc.pos), wzc.hash))
+				log.warning("wzc:mark_dirty %s : %s %x",
+					minetest.pos_to_string(pos),
+					minetest.pos_to_string(wzc.pos), wzc.hash)
 				wzc:mark_dirty()
 			end
 		end
@@ -447,9 +443,8 @@ function wayzone_store:get_pos_info(pos, where)
 		if pathfinder.can_stand_at(info.pos, 2) then
 			-- should be able to stand at pos, so wayzone data is old
 			-- FIXME: warn for now. this should be rare, but noteworthy
-			minetest.log("warning",
-				string.format("waypoint[%s]: reprocessing %x %s", where or "??",
-					info.wzc.hash, minetest.pos_to_string(info.wzc.pos)))
+			log.warning("waypoint[%s]: reprocessing %x %s", where or "??",
+				info.wzc.hash, minetest.pos_to_string(info.wzc.pos))
 			info.wzc:mark_dirty()
 			info.wzc = self:chunk_get_by_hash(info.wzc.hash)
 			info.wz = info.wzc:get_wayzone_for_pos(info.pos)
@@ -458,9 +453,9 @@ function wayzone_store:get_pos_info(pos, where)
 			local node = minetest.get_node(info.pos)
 			local pos_below = vector.new(info.pos.x,info.pos.y-1,info.pos.z)
 			local node_below = minetest.get_node(pos_below)
-			minetest.log("warning", string.format("waypoint[%s]: cannot stand %s [%s] below %s [%s]", where or "??",
-					minetest.pos_to_string(info.pos), node.name,
-					minetest.pos_to_string(pos_below), node_below.name))
+			log.warning("waypoint[%s]: cannot stand %s [%s] below %s [%s]", where or "??",
+				minetest.pos_to_string(info.pos), node.name,
+				minetest.pos_to_string(pos_below), node_below.name)
 		end
 	end
 	return info
@@ -522,7 +517,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 		-- make sure link info is up-to-date (will not reprocess chunks)
 		wayzones_refresh_links(si.wzc, di.wzc)
 		if si.wz:link_test_to(di.wz) then
-			-- minetest.log("warning", string.format(" ++ direct link detected"))
+			-- log.warning(" ++ direct link detected")
 			return { si.wz, di.wz }
 		end
 	end
@@ -535,11 +530,10 @@ function wayzone_store:find_path(start_pos, target_pos)
 	-- adds an active walker with logging -- remove logging when tested
 	local function add_open(fwd_rev, item)
 		--log_table(item)
-		--minetest.log("warning",
-		--	string.format("add_open: %s pos=%s key=%s hCost=%d gCost=%d",
-		--		tostring(fwd_rev.fwd),
-		--		minetest.pos_to_string(item.cur.pos),
-		--		item.cur.key, item.hCost, item.gCost))
+		--log.warning("add_open: %s pos=%s key=%s hCost=%d gCost=%d",
+		--	tostring(fwd_rev.fwd),
+		--	minetest.pos_to_string(item.cur.pos),
+		--	item.cur.key, item.hCost, item.gCost)
 
 		-- Add the starting wayzone (insert populates sl_key)
 		fwd_rev.posSet:insert(item)
@@ -692,18 +686,109 @@ function wayzone_store:find_path(start_pos, target_pos)
 		do_neighbors(fwd, ff, true)
 		do_neighbors(rev, rr, false)
 	end
-	minetest.log("warning", string.format("wayzone path fail: %s -> %s, steps=%d",
-			minetest.pos_to_string(si.pos),
-			minetest.pos_to_string(di.pos), steps))
+	log.warning("wayzone path fail: %s -> %s, steps=%d",
+		minetest.pos_to_string(si.pos),
+		minetest.pos_to_string(di.pos), steps)
 	log_all()
 	return nil
 end
 
 -------------------------------------------------------------------------------
 
+--[[
+Find a standable positions (using the wayzone stuff) around @target_pos.
+@target_pos is the position to search.
+@radius is a number or a vector indicating the distance to search on each axis
+@start_pos the villager position. if not nil, this will gather all positions
+   with the the same radius and pick the closest one.
+@return the best positions
+]]
+function wayzone_store:find_standable_near(target_pos, radius, start_pos)
+	if radius == nil then
+		radius = 3
+	end
+	if type(radius) == "number" then
+		radius = vector.new(radius, radius, radius)
+	end
+	if radius.y == nil then
+		radius.y = 2
+	end
+
+	-- checks to see if a position
+	local function test_standable(pos, state, rank)
+		--log.action("test_standable: %s r=%s/%s", minetest.pos_to_string(pos), tostring(rank), tostring(state.rank))
+		if state.rank ~= nil and rank > state.rank then
+			return true
+		end
+
+		local function check_pos(xxpos)
+			local wzc = self:chunk_get_by_pos(xxpos)
+			return (wzc ~= nil) and (wzc:get_wayzone_for_pos(xxpos) ~= nil)
+		end
+
+		for dy=0,radius.y do
+			local hpos
+			local tpos = vector.new(pos.x, pos.y + dy, pos.z)
+			if check_pos(tpos) then
+				hpos = tpos
+			end
+			if hpos == nil and dy > 0 then
+				tpos = vector.new(pos.x, pos.y - dy, pos.z)
+				if check_pos(tpos) then
+					hpos = tpos
+				end
+			end
+			if hpos ~= nil then
+				if state.pos == nil then
+					state.pos = {}
+					state.rank = rank
+				end
+				table.insert(state.pos, hpos)
+				-- only doing one if start_pos==nil
+				if start_pos == nil then
+					return true
+				end
+				break -- don't search further up/down
+			end
+		end
+		return false
+	end
+
+	-- collect valid positions in state.pos
+	local state = {}
+	func.iterate_surrounding_xz(target_pos, radius, test_standable, state)
+	if state.rank == nil then
+		return nil
+	end
+	local s = {}
+	for _, pos in ipairs(state.pos) do
+		table.insert(s, minetest.pos_to_string(pos))
+	end
+	--log.warning("wayzone_store:find_standable_near(%s) => r=%d %s",
+	--	minetest.pos_to_string(target_pos), state.rank,
+	--	table.concat(s, ","))
+	if #state.pos == 1 then
+		return state.pos[1]
+	end
+	local best_d2
+	local best_pos
+	for _, pos in ipairs(state.pos) do
+		local dx = math.abs(pos.x - start_pos.x)
+		local dz = math.abs(pos.z - start_pos.z)
+		local d2 = dx * dx + dz * dz
+		if best_d2 == nil or d2 < best_d2 then
+			best_d2 = d2
+			best_pos = pos
+		end
+	end
+	return best_pos
+end
+
+-------------------------------------------------------------------------------
+
 -- Mark the chunk as dirty in all stores.
 local function dirty_chunk_data(pos)
-	minetest.log("warning", string.format("dirty_chunk_data %s", minetest.pos_to_string(pos)))
+	log.warning("dirty_chunk_data %s", minetest.pos_to_string(pos))
 	for _, ss in ipairs(wayzone_store.stores) do
 		ss:chunk_dirty(pos)
 	end
@@ -720,9 +805,8 @@ local function wayzone_store_on_placenode(pos, newnode, placer, oldnode, itemsta
 	local new_nodedef = minetest.registered_nodes[newnode.name]
 	local imp = (old_nodedef.walkable or new_nodedef.walkable or
 	             old_nodedef.climbable or new_nodedef.climbable)
-	minetest.log("action",
-		string.format("wayzones: node %s placed at %s over %s important=%s",
-			newnode.name, minetest.pos_to_string(pos), oldnode.name, tostring(imp)))
+	log.action("wayzones: node %s placed at %s over %s important=%s",
+		newnode.name, minetest.pos_to_string(pos), oldnode.name, tostring(imp))
 	if imp then
 		dirty_chunk_data(pos)
 	end
@@ -731,9 +815,8 @@ end
 local function wayzone_store_on_dignode(pos, oldnode, digger)
 	local old_nodedef = minetest.registered_nodes[oldnode.name]
 	local imp = old_nodedef.walkable or old_nodedef.climbable
-	minetest.log("action",
-		string.format("wayzones: node %s removed from %s important=%s",
-			oldnode.name, minetest.pos_to_string(pos), tostring(imp)))
+	log.action("wayzones: node %s removed from %s important=%s",
+		oldnode.name, minetest.pos_to_string(pos), tostring(imp))
 	if imp then
 		dirty_chunk_data(pos)
 	end

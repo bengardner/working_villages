@@ -58,6 +58,9 @@ working_villages.require("jobs/woodcutter")
 working_villages.require("jobs/torcher")
 working_villages.require("jobs/snowclearer")
 
+working_villages.require("job_tasks")
+
+
 if working_villages.setting_enabled("spawn",false) then
   working_villages.require("spawn")
 end
@@ -65,6 +68,9 @@ end
 if working_villages.setting_enabled("debug_tools",false) then
   working_villages.require("util_test")
 end
+
+working_villages.nav = working_villages.require("wayzone_store").get({
+	height = 2, jump_height = 1, fear_height = 2, can_climb = true })
 
 --ready
 local time_to_load= os.clock() - init

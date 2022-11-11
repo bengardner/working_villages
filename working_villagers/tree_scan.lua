@@ -97,7 +97,7 @@ function tree_scan.check_tree(start_pos)
 	table.sort(trunk_pos, pos_sort)
 	table.sort(leaves_pos, pos_sort)
 
-	log.action("tree: %s other_maxy=%d tree=%d leaves=%d",
+	log.action("tree: %s other_maxy=%s tree=%d leaves=%d",
 		minetest.pos_to_string(trunk_pos[1]),
 		tostring(other_maxy), #trunk_pos, #leaves_pos)
 

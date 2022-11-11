@@ -47,9 +47,9 @@ function wayzone_path.start(start_pos, target_pos, args)
 	local target_bpos = vector.new(target_pos.x, target_pos.y-1, target_pos.z)
 	local target_bnode = minetest.get_node(target_bpos)
 
-	minetest.log("action", string.format(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s])",
-			minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
-			minetest.pos_to_string(target_pos), target_node.name, target_bnode.name))
+	log.action(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s])",
+		minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
+		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name)
 
 	self.ss = wayzone_store.get(args)
 	-- other fields that show up later:
@@ -70,6 +70,7 @@ end
 
 -- grab the next position
 function wayzone_path:next_goal(cur_pos)
+	-- current position may have rounded into a solid node
 	if pathfinder.is_node_collidable(cur_pos) then
 		cur_pos = vector.new(cur_pos.x, cur_pos.y+1, cur_pos.z)
 	end
@@ -85,8 +86,7 @@ function wayzone_path:next_goal(cur_pos)
 		self.path_idx = (self.path_idx or 0) + 1
 		if self.path_idx <= #self.path then
 			local pp = self.path[self.path_idx]
-			minetest.log("action",
-				string.format("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
+			log.action("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
 			return pp
 		end
 	end
@@ -98,6 +98,8 @@ function wayzone_path:next_goal(cur_pos)
 	if si.wz == nil or di.wz == nil then
 		-- Oof. Someone must have placed a block over the target position
 		-- FIXME: if target_pos describes an area, we need to pick a different position in that area.
+		log.action("next_goal: si.wz or di.wz are nil, marking dest as dirty")
+		self.ss:chunk_dirty(self.target_pos)
 		return nil, fail.no_path
 	end
 
@@ -105,9 +107,8 @@ function wayzone_path:next_goal(cur_pos)
 	-- clear the wayzone sequence if we diverged from the path
 	if self.wzpath ~= nil and self.wzkeys ~= nil then
 		if self.wzkeys[si.wz.key] == nil then
-			minetest.log("warning",
-				string.format("next_goal: did not find current %s %s in path! Recomputing.",
-					si.wz.key, minetest.pos_to_string(si.pos)))
+			log.warning("next_goal: did not find current %s %s in path! Recomputing.",
+				si.wz.key, minetest.pos_to_string(si.pos))
 			self.wzpath = nil
 		end
 	end
@@ -150,7 +151,8 @@ function wayzone_path:next_goal(cur_pos)
 	end
 	local wzpath_idx = self.wzkeys[si.wz.key]
 	if wzpath_idx == nil then
-		minetest.log("warning", string.format("wzpath_idx=%s key=%s", tostring(wzpath_idx), si.wz.key))
+		-- this "can't" happen...
+		log.warning("wzpath_idx=%s key=%s", tostring(wzpath_idx), si.wz.key)
 		wzpath_idx = 1
 	end
 
@@ -180,9 +182,13 @@ function wayzone_path:next_goal(cur_pos)
 		log.action(" find_path wz_ok: %s", wz.key)
 	end
 
-	-- find the path
+	-- find the path using the good old A* node pathfinder
 	self.path = pathfinder.find_path(si.pos, target_area, nil, {want_nil=true})
 	if self.path == nil then
+		-- Failed when we should have succeeded. Mark all involved chunks as dirty.
+		for _, wz in ipairs(target_area.wz_ok) do
+			self.ss:chunk_dirty(wz.cpos)
+		end
 		return nil, fail.no_path
 	end
 	if #self.path > 0 then
@@ -191,8 +197,7 @@ function wayzone_path:next_goal(cur_pos)
 			minetest.pos_to_string(self.target_pos), #self.path)
 		self.path_idx = 1
 		local pp = self.path[1]
-		minetest.log("action",
-			string.format("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp)))
+		log.action("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
 		return pp
 	end
 	log.action("next_goal: empty path")

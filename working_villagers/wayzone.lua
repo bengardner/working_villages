@@ -423,6 +423,23 @@ local function wayzone_calc_center(self)
 	self.visited_count = count
 end
 
+--function wayzone:minpack_pos_to_bitidx(self, pos)
+--	local rel_pos = vector.new(pos.x - self.minp.x, pos.y - self.minp.y, pos.z - self.minp.z)
+--	local bit_idx = rel_pos.y + rel_pos.x *
+--end
+--
+---- rebase all coordinates to minp and re-build the visited array.
+--function wayzone:minpackvisited(self)
+--	self.visited_x_stride = 1 + self.maxp.x - self.minp.x
+--	self.visited_z_stride = (1 + self.maxp.z - self.minp.z) * self.visited_x_stride
+--	self.visited_dy = 1 + self.maxp.y - self.minp.y
+--	local total_bits = self.visited_dx * self.visited_dy * self.visited_dz
+--	local total_bytes = (self.visited_dx * self.visited_dy * self.visited_dz + 7) / 8
+--	for pos in self:iter_visited() do
+--		local bit_idx = vector.new(pos.x - self.minp.x, pos.y - self.minp.y, pos.z - self.minp.z)
+--	end
+--end
+
 --[[
 Flatten the 'visited' bitarray to a string, which uses at most chunk_bytes.
 If CS=8, chunk_bytes is 64 bytes (8x8x8/8).
@@ -435,6 +452,7 @@ Wayzones that were flat (dy=1) would use even less.
 function wayzone:finish(in_water)
 	-- pack the visited table into a fixed-length string.
 	assert(type(self.visited) == "table")
+	--self:minpackvisited()
 	local tmp = {}
 	for idx=1,chunk_bytes do
 		table.insert(tmp, string.char(self.visited[idx] or 0))
