@@ -1,10 +1,11 @@
 --[[
 A tool to display information about a node.
 ]]
-local wayzone_utils = working_villages.require("wayzone_utils")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local tree_scan = working_villages.require("tree_scan")
 local tool_name = "working_villages:query_tool"
 local log = working_villages.require("log")
+local func = working_villages.require("jobs/util")
 
 local function log_object(obj)
 	log.action(" + object.get_pos() -> %s",
@@ -61,7 +62,17 @@ local function log_invref(inv)
 	wayzone_utils.log_table("group counts", grp_cnt)
 end
 
+local function log_player_pos(player)
+	local ppos = player:get_pos()
+	local spos = func.adjust_stand_pos(ppos)
+
+	wayzone_utils.put_marker(spos, "node")
+	log.warning("player %s adjusted %s", minetest.pos_to_string(ppos), minetest.pos_to_string(spos))
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
+	log_player_pos(user)
+
 	if (pointed_thing.type == "node") then
 		local pos = minetest.get_pointed_thing_position(pointed_thing)
 		local node = minetest.get_node(pos)

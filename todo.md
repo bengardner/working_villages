@@ -15,7 +15,24 @@ Saw the MOB get stuck on a corner between 4 nodes.
 
 There were 3 present and the on missing was 2-deep.
 
-Not sure what was going on, but it might be a rounding issue.
+The collision box for the MOB is colliding with a neighbor node. We have to assume that we are standing on the ground.
+
+If the current position isn't good, then:
+if x > 0.5 then try x+1
+if x < 0.5 then try x-1
+Same for Z.
+
+b0: x > z
+b1: ax > 0.1
+b2: az > 0.1
+b3: ax > 0
+b4: az > 0
+
+if drx > 0.6 then we will try node to +x
+if drz > 0.6 then we will try node to +z
+if both then we will try node to +x, +z
+
+
 
 ### Cost Adjustments
 

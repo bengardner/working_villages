@@ -1,6 +1,6 @@
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 
 working_villages.func = func
 working_villages.pathfinder = pathfinder

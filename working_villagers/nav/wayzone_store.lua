@@ -37,12 +37,12 @@ Functions:
 		Returns nil on a failed path.
 ]]
 
-local wayzone = working_villages.require("wayzone")
-local wayzone_chunk = working_villages.require("wayzone_chunk")
+local wayzone = working_villages.require("nav/wayzone")
+local wayzone_chunk = working_villages.require("nav/wayzone_chunk")
 
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 local sorted_hash = working_villages.require("sorted_hash")
-local wayzone_utils = working_villages.require("wayzone_utils")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local fail = working_villages.require("failures")
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
@@ -695,12 +695,19 @@ end
 
 -------------------------------------------------------------------------------
 
+function wayzone_store:get_wayzone_for_pos(pos)
+	local wzc = self:chunk_get_by_pos(pos)
+	if wzc ~= nil then
+		return wzc:get_wayzone_for_pos(pos)
+	end
+	return nil
+end
+
 -- scan for the first position in a wayzone going from pos.y and then down
 -- both @up_y and @down_y should be positive
 function wayzone_store:find_standable_y(pos, up_y, down_y)
 	local function check_pos(xxpos)
-		local wzc = self:chunk_get_by_pos(xxpos)
-		return (wzc ~= nil) and (wzc:get_wayzone_for_pos(xxpos) ~= nil)
+		return self:get_wayzone_for_pos(xxpos) ~= nil
 	end
 	local pp = vector.new(pos)
 	for dy = 0, up_y do
@@ -745,8 +752,7 @@ function wayzone_store:find_standable_near(target_pos, radius, start_pos)
 		end
 
 		local function check_pos(xxpos)
-			local wzc = self:chunk_get_by_pos(xxpos)
-			return (wzc ~= nil) and (wzc:get_wayzone_for_pos(xxpos) ~= nil)
+			return self:get_wayzone_for_pos(xxpos) ~= nil
 		end
 
 		for dy=0,radius.y do
@@ -807,10 +813,26 @@ function wayzone_store:find_standable_near(target_pos, radius, start_pos)
 	return best_pos
 end
 
+-- Do a quick wayzone check to see if we could get there from here.
 function wayzone_store:is_reachable(start_pos, target_pos)
 	log.action("wayzone_store:is_reachable: start=%s target=%s",
 		minetest.pos_to_string(start_pos),
 		minetest.pos_to_string(target_pos))
+	local wzpath = self:find_path(start_pos, target_pos)
+	return wzpath ~= nil
+end
+
+--[[
+Try to resolve the current position to the correct node position.
+This is usually just rounding, but we could be standing over a node, on a
+neighbor node.
+
+ M
+  XX
+XXXX
+]]
+function wayzone_store:round_position(pos)
+
 	local wzpath = self:find_path(start_pos, target_pos)
 	return wzpath ~= nil
 end

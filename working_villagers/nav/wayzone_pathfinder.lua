@@ -17,12 +17,12 @@ Functions:
 			nil, nil = path finished, no failure
 ]]
 
-local wayzone = working_villages.require("wayzone")
-local wayzone_chunk = working_villages.require("wayzone_chunk")
-local wayzone_store = working_villages.require("wayzone_store")
+local wayzone = working_villages.require("nav/wayzone")
+local wayzone_chunk = working_villages.require("nav/wayzone_chunk")
+local wayzone_store = working_villages.require("nav/wayzone_store")
 local log = working_villages.require("log")
 
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 local fail = working_villages.require("failures")
 
 -------------------------------------------------------------------------------

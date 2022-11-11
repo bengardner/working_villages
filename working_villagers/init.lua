@@ -39,10 +39,10 @@ working_villages.require("commanding_sceptre")
 
 working_villages.require("deprecated")
 
-working_villages.require("pathfinder_tester")
-working_villages.require("query_tool")
-working_villages.require("waypoint_tool")
-working_villages.require("wayzone_pathfinder")
+working_villages.require("nav/pathfinder_tester")
+working_villages.require("nav/query_tool")
+working_villages.require("nav/waypoint_tool")
+working_villages.require("nav/wayzone_pathfinder")
 
 --job helpers
 working_villages.require("jobs/util")
@@ -69,7 +69,7 @@ if working_villages.setting_enabled("debug_tools",false) then
   working_villages.require("util_test")
 end
 
-working_villages.nav = working_villages.require("wayzone_store").get({
+working_villages.nav = working_villages.require("nav/wayzone_store").get({
 	height = 2, jump_height = 1, fear_height = 2, can_climb = true })
 
 --ready

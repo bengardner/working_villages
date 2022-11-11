@@ -59,7 +59,7 @@ Functions:
 		Check if the chunk needs to be regenerated.
 ]]
 local log = working_villages.require("log")
-local wayzone = working_villages.require("wayzone")
+local wayzone = working_villages.require("nav/wayzone")
 
 local wayzone_chunk = {}
 

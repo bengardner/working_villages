@@ -1,9 +1,9 @@
 local fail = working_villages.require("failures")
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
-local pathfinder = working_villages.require("pathfinder")
-local wayzone_path = working_villages.require("wayzone_pathfinder")
-local wayzone_utils = working_villages.require("wayzone_utils")
+local pathfinder = working_villages.require("nav/pathfinder")
+local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
 
 --[[
 This does the actual movement.
@@ -70,6 +70,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	local exact_step = need_exact_pos()
 
 	while true do
+		self:set_animation(working_villages.animation_frames.WALK)
 		local cur_pos = vector.round(self.object:get_pos())
 		if self.cur_goal == nil then
 			self.cur_goal = wzp:next_goal(cur_pos)
@@ -218,6 +219,10 @@ function working_villages.villager:collect_nearby_items_by_condition(cond, searc
 		if #items > 1 then
 			-- collect the closest item first
 			table.sort(items, function(a, b)
+				-- items may have been destroyed...
+				if a == nil or a:get_pos() == nil or b == nil or b:get_pos() == nil then
+					return false
+				end
 				return vector.distance(my_pos, a:get_pos()) > vector.distance(my_pos, b:get_pos())
 			end)
 		end

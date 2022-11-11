@@ -5,10 +5,10 @@ Based off the pathfiner tester used in the dev test.
 local S = minetest.get_translator("testpathfinder")
 local log = working_villages.require("log")
 
-local pathfinder = working_villages.require("pathfinder")
-local waypoints = working_villages.require("waypoint_zones")
-local wayzone_path = working_villages.require("wayzone_pathfinder")
-local wayzone_store = working_villages.require("wayzone_store")
+local pathfinder = working_villages.require("nav/pathfinder")
+--local waypoints = working_villages.require("nav/waypoint_zones")
+local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
+local wayzone_store = working_villages.require("nav/wayzone_store")
 
 local function co_path(pos1, pos2)
 	local wzp = wayzone_path.start(pos1, pos2)

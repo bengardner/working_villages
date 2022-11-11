@@ -1,6 +1,6 @@
 local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 
 ---------------------------------------------------------------------
 
@@ -28,7 +28,7 @@ function villager:count_inventory(groups)
 	local inv = self:get_inventory()
 
 	local grp_cnt = {}
-	for _, gname in ipairs(grp_cnt) do
+	for _, gname in ipairs(groups) do
 		grp_cnt[gname] = 0
 	end
 	for _, stack in pairs(inv:get_lists()) do
@@ -747,6 +747,11 @@ This is mainly useful when changing jobs externally.
 ]]
 function villager:task_clear()
 	self.task_queue = {}
+end
+
+-- check if the named task is on the queue
+function villager:task_present(name)
+	return self.task_queue[name] ~= nil
 end
 
 -- get the best task

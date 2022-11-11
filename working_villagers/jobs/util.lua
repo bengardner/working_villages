@@ -1,5 +1,5 @@
 local func = {}
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 local log = working_villages.require("log")
 
 function func.find_path_toward(pos, villager)
@@ -33,9 +33,18 @@ function func.find_ground_below(position)
 	return pos
 end
 
+--[[
+This adjusts pos up by 1 if we are on stairs or another walkable node that
+doesn't fill the whole node.
+For example, the MOB will usually be at, say, y=10.5, which is on top of node
+at y=10. The position for pathfinding purposes is y=11. round() is correct.
+However, if on stairs or a slab, we might be at y=10.25. That would round to
+y=10, which is invalid for pathfinding.
+]]
 function func.validate_pos(pos)
 	local resultp = vector.round(pos)
 	local node = minetest.get_node(resultp)
+	-- Are we inside a walkable node? then go up by 1
 	if minetest.registered_nodes[node.name].walkable then
 		resultp = vector.subtract(pos, resultp)
 		resultp = vector.round(resultp)
@@ -46,7 +55,90 @@ function func.validate_pos(pos)
 	end
 end
 
---TODO: look in pathfinder whether defining this is even nessecary
+--[[
+This adjusts pos to the nearest likely stand position.
+There are two problems:
+ 1. Stairs and slabs cause round() to drop down, so that the current position
+    is inside a walkable node. We need to bump y+1.
+ 2. We might be standing over air, but are really standing on a neighbor node.
+    For this, we need to check the other 1-3 nodes in the 4-block area.
+]]
+function func.adjust_stand_pos(pos)
+	local rpos = vector.round(pos)
+
+	-- 1. If inside a walkable node, we go up by 1
+	local node = minetest.get_node(rpos)
+	if minetest.registered_nodes[node.name].walkable then
+		rpos.y = rpos.y + 1
+	end
+
+	-- 2. If over air, we need to shift a bit to over a neighbor node
+	local bpos = vector.new(rpos.x, rpos.y-1, rpos.z)
+	node = minetest.get_node(bpos)
+	if not minetest.registered_nodes[node.name].walkable then
+		local ret = {}
+		local function try_dpos(dpos)
+			if ret.pos ~= nil then
+				return
+			end
+			local tpos = vector.add(rpos, dpos)
+			--log.action("trying %s for %s", minetest.pos_to_string(tpos), pos)
+			node = minetest.get_node(tpos)
+			if not minetest.registered_nodes[node.name].walkable then
+				node = minetest.get_node(vector.new(tpos.x, tpos.y - 1, tpos.z))
+				if minetest.registered_nodes[node.name].walkable then
+					ret.pos = tpos
+					return true
+				end
+			end
+		end
+
+		local dpos = vector.subtract(pos, rpos) -- should be -0.5 to 0.5 on each axis
+		local arr_pos = {}
+
+		--log.action("  === pos=%s rpos=%s dpos=%s", minetest.pos_to_string(pos), minetest.pos_to_string(rpos), minetest.pos_to_string(dpos))
+
+		local sx, sz
+		if dpos.x < 0 then
+			sx = -1
+		else
+			sx = 1
+		end
+		if dpos.z < 0 then
+			sz = -1
+		else
+			sz = 1
+		end
+		-- We try side, side, diagonal
+		if math.abs(dpos.x) > 0.1 then
+			table.insert(arr_pos, vector.new(sx,0,0))
+		end
+		if math.abs(dpos.z) > 0.1 then
+			table.insert(arr_pos, vector.new(0,0,sz))
+		end
+		if #arr_pos == 2 then
+			-- reverse the two if dz was bigger
+			if math.abs(dpos.x) < math.abs(dpos.z) then
+				arr_pos[1], arr_pos[2] = arr_pos[2], arr_pos[1]
+			end
+			-- add the diagonal
+			table.insert(arr_pos, vector.new(sx,0,sz))
+		end
+
+		-- try the positions in order
+		for _, dp in ipairs(arr_pos) do
+			if try_dpos(dp) then
+				break
+			end
+		end
+		if ret.pos ~= nil then
+			return ret.pos
+		end
+	end
+	return rpos
+end
+
+--TODO: look in pathfinder whether defining this is even necessary
 -- Checks to see if a MOB can stand in the location.
 function func.clear_pos(pos)
 	local node = minetest.get_node(pos)
@@ -149,7 +241,7 @@ func.search_surrounding = search_surrounding
 
 --[[
 Iterate node positions in an expanding box around pos in the XZ plane.
-Returns the first position for which func returns true.
+Returns the first position for which @func returns a true value.
 
 @pos is the start position, first called on that position
 @search_range contains the radius for each axis. only x and z are used.
@@ -222,7 +314,9 @@ local adjacent_pos = {
 	vector.new(0, 0, -1)
 }
 
--- Check the position and the six adjacent positions
+-- Call @pred on @pos and the six adjacent positions
+-- Returns the position (vector) if @pred returns non-nil.
+-- Returns false if @pred does not return non-nil.
 function func.find_adjacent_pos(pos, pred)
 	if pred(pos) then
 		return pos
@@ -235,6 +329,8 @@ function func.find_adjacent_pos(pos, pred)
 	end
 	return false
 end
+
+-------------------------------------------------------------------------------
 
 -- Activating owner griefing settings departs from the documented behavior
 -- of the protection system, and may break some protection mods.
@@ -302,6 +398,8 @@ function func.is_protected(self, pos)
 	return func.is_protected_owner(self.owner_name, pos)
 end
 
+-------------------------------------------------------------------------------
+
 -- chest manipulation support functions
 function func.is_chest(pos)
 	local node = minetest.get_node_or_nil(pos)
@@ -315,7 +413,7 @@ function func.is_chest(pos)
 end
 
 --[[
-Pick an item from the 'readonly' array.
+Pick an item from the 'read-only' array.
 If you change the array, remove 'total_weight' from the table.
 The value should be a table with a 'weight' field. Default 1.
 weight must be an integer
@@ -334,11 +432,9 @@ function func.pick_random(tab)
 	-- pick an entry
 	if tab.total_weight > 0 then
 		local sel = math.random(1, tab.total_weight)
-		log.action("pick_random: total_weight=%s sel=%s", tostring(tab.total_weight), tostring(sel))
 		for idx, val in ipairs(tab) do
 			local w = (val.weight or 1)
 			if sel <= w then
-				log.warning("pick_random: returning entry %d", idx)
 				return val
 			end
 			sel = sel - w

@@ -1,10 +1,42 @@
 --[[
 Registers some useful common tasks.
 The "self" passed to the functions is a "villager".
+Also provides a series of common "check" functions that add tasks to the queue.
+
+Schedule info:
+Villagers have a schedule, depending on their job.
+minetest.get_timeofday() return a value from 0 to 1 scaled from 0 to 24 h.
+
+Mapped out:
+ 12 AM = 0 (midnight)
+  4 AM = 0.167
+  6 AM = 0.250
+  8 AM = 0.333
+ 10 AM = 0.417
+  noon = 0.500
+  6 PM = 0.750
+  8 PM = 0.833
+  9 PM = 0.833
+ 10 PM = 0.917
+
+A typical schedule would be:
+ - sleep from 9 PM to 6 AM (loc: home, bed)
+ - breakfast at 7 AM (loc: home or pub)
+ - start work at 7:30 AM (loc: job site)
+ - lunch break around noon (after noon and haven't had lunch yet)
+   - field worker finds someplace to sit down and eat
+   - shopkeeper goes home? or just stands and eats.
+ - end work at 4:30 PM
+   - go home to 'wash up' (loc: home) -- bath house?
+ - socialize 5 PM - 7 PM, with dinner around 6 PM (loc: tavern or town center or anywhere (boid?) )
+ - head home around 8 PM, hang out there (loc: home)
+ - go to bed at 9 PM
 ]]
 local log = working_villages.require("log")
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 local func = working_villages.require("jobs/util")
+
+local tasks = {}
 
 -- require a clear area (non-walkable) with standable below in a 3x3 grid
 local function is_resting_spot(pos)
@@ -24,14 +56,17 @@ end
 
 local rest_searching_range = {x = 10, y = 10, z = 5, h = 5}
 
+local function find_rest_spot(self)
+	return func.iterate_surrounding_xz(self.object:get_pos(), rest_searching_range, is_resting_spot)
+end
+
 local function task_rest(self)
 	self:set_displayed_action("enjoying nature")
 	self:stand_still()
 
-	local target = func.iterate_surrounding_xz(self.object:get_pos(), rest_searching_range, is_resting_spot)
-	if target == nil then
-		log.warning("could not find a place to rest")
-		return true
+	local target = find_rest_spot(self)
+	if target ~= nil then
+		self:go_to(target)
 	end
 
 	self:sit_down()
@@ -64,6 +99,7 @@ local idle_tasks = {
 
 local function task_idle(self)
 	while true do
+		self:set_state_info("I don't have anything to do.")
 		self:set_displayed_action("doing nothing")
 		-- Randomly select a higher-priority idle task
 		self:task_add(func.pick_random(idle_tasks).name)
@@ -74,19 +110,85 @@ end
 working_villages.register_task("idle", { func = task_idle, priority = 10 })
 
 local function task_goto_bed(self)
-	while self:is_sleep_time() do
-		self:set_displayed_action("going to bed")
-		self:sit_down()
+	log.action("%s: I am going to bed!", self.inventory_name)
+	self:set_displayed_action("going to bed")
 
-		-- TODO:
-		--  * if we have a house, head there
-		--  * find a nearby bed
-		--  * if we have a bed, lay in it
-		--  * if sleeping, toss/turn occasionally
-		log.action("%s: I am going to bed!", self.product_name)
-		self:delay_seconds(5)
+	if self.pos_data.home_pos == nil then
+		log.action("villager %s is waiting until dawn", self.inventory_name)
+		self:set_state_info("I'm waiting for dawn to come.")
+		self:set_displayed_action("waiting until dawn")
+
+		-- find a nearby place to rest
+		local target = find_rest_spot(self)
+		if target ~= nil then
+			self:go_to(target)
+		end
+
+		while self:is_sleep_time() do
+			self:sit_down()
+			self:delay_seconds(5)
+		end
+
+		self:set_animation(working_villages.animation_frames.STAND)
+		self:set_state_info("I'm starting into the new day.")
+		self:set_displayed_action("active")
+	else
+		log.action("villager %s is going home", self.inventory_name)
+		self:set_state_info("I'm going home, it's late.")
+		self:set_displayed_action("going home")
+		self:go_to(self.pos_data.home_pos)
+		if self.pos_data.bed_pos == nil then
+			log.warning("villager %s couldn't find his bed", self.inventory_name)
+			self:set_state_info("I am going to rest soon.\nI would love to have a bed in my home though.")
+			self:set_displayed_action("waiting for dusk")
+
+			self:set_state_info("I'm waiting for dawn to come.")
+			self:set_displayed_action("waiting until dawn")
+
+			while self:is_sleep_time() do
+				self:sit_down()
+				self:delay_seconds(5)
+			end
+		else
+			log.info("villager %s bed is at: %s", self.inventory_name, minetest.pos_to_string(self.pos_data.bed_pos))
+			self:set_state_info("I'm going to bed, it's late.")
+			self:set_displayed_action("going to bed")
+			self:go_to(self.pos_data.bed_pos)
+			self:set_state_info("I am going to sleep soon.")
+			self:set_displayed_action("waiting for dusk")
+			local tod = minetest.get_timeofday()
+			while (tod > 0.2 and tod < 0.805) do
+				coroutine.yield()
+				tod = minetest.get_timeofday()
+			end
+			self:sleep()
+			self:go_to(self.pos_data.home_pos)
+		end
 	end
-	-- done
 	return true
 end
 working_villages.register_task("goto_bed", { func = task_goto_bed, priority = 50 })
+
+-------------------------------------------------------------------------------
+
+-- Checks to see if it is nighttime and adds the "goto_bed" task
+function tasks.check_sleeptime(self)
+	local tod = minetest.get_timeofday()
+
+	if self:is_sleep_time() then
+		self:task_add("goto_bed")
+	else
+		self:task_del("goto_bed", "not night")
+	end
+end
+
+-- Adds the "idle" task if there is no other task
+function tasks.check_idle(self)
+	if self.task.priority == nil then
+		self:task_add("idle")
+	end
+end
+
+-------------------------------------------------------------------------------
+
+return tasks

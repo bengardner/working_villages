@@ -1,7 +1,7 @@
 --[[
 Misc utility functions that do not belong anywhere else.
 ]]
-local wayzone = working_villages.require("wayzone")
+local wayzone = working_villages.require("nav/wayzone")
 local log = working_villages.require("log")
 
 local wayzone_utils = {}

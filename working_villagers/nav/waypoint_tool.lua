@@ -6,10 +6,10 @@ The clicked node must be walkable with two clear nodes above.
 local S = default.get_translator
 
 local log = working_villages.require("log")
-local pathfinder = working_villages.require("pathfinder")
-local wayzone_path = working_villages.require("wayzone_pathfinder")
-local wayzone_store = working_villages.require("wayzone_store")
-local wayzone_utils = working_villages.require("wayzone_utils")
+local pathfinder = working_villages.require("nav/pathfinder")
+local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
+local wayzone_store = working_villages.require("nav/wayzone_store")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
 
 local waypoint_tool_name = "working_villages:waypoint_tool"
 

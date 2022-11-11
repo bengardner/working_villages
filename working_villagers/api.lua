@@ -1,6 +1,6 @@
 local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
-local pathfinder = working_villages.require("pathfinder")
+local pathfinder = working_villages.require("nav/pathfinder")
 
 working_villages.animation_frames = {
 	STAND     = { x=  0, y= 79, },
@@ -551,6 +551,7 @@ function working_villages.register_villager(product_name, def)
 			infotext                    = "",
 			nametag                     = "",
 			static_save                 = true,
+			show_on_minimap             = true,
 		}
 	})
 
