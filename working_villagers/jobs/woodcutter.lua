@@ -5,6 +5,7 @@ local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local tree_scan = working_villages.require("tree_scan")
 local tasks = working_villages.require("job_tasks")
+local wayzone = working_villages.require("nav/wayzone")
 
 local function mark_tree_as_failed(tree)
 	log.warning("marking tree at %s as failed", minetest.pos_to_string(tree[1]))
@@ -137,22 +138,6 @@ local function check_idle(self)
 	end
 end
 
-local function task_gather_saplings(self)
-	while true do
-		local cnt = self:count_inventory_one("sapling")
-		if cnt > 16 then
-			log.action("too many saplings")
-			return true
-		end
-		-- collect sapling (TODO: also pick up apples, sticks, etc)
-		if not self:collect_nearby_items_by_condition(is_sapling, searching_range) then
-			return true
-		end
-		self:delay_steps(2)
-	end
-end
-working_villages.register_task("gather_saplings", { func = task_gather_saplings, priority = 40 })
-
 local function task_plant_saplings(self)
 	while true do
 		-- Do we have any saplings?
@@ -162,9 +147,13 @@ local function task_plant_saplings(self)
 		end
 
 		-- Do we have a spot to plant saplings?
-		local target = func.search_surrounding(self.object:get_pos(), is_sapling_spot, searching_range)
+		local target = self.task_data.plant_sapling_pos
+		self.task_data.plant_sapling_pos = nil
 		if target == nil then
-			return true
+			target = func.search_surrounding(self.object:get_pos(), is_sapling_spot, searching_range)
+			if target == nil then
+				return true
+			end
 		end
 
 		log.action("plant sapling @ %s", minetest.pos_to_string(target))
@@ -188,96 +177,247 @@ local function task_plant_saplings(self)
 end
 working_villages.register_task("plant_saplings", { func = task_plant_saplings, priority = 35 })
 
-local function task_chop_tree(self)
-	while true do
-		local cnt = self:count_inventory_one("tree")
-		if cnt > 50 then
-			log.action("too many trees")
-			return true
-		end
+-- Add the chunk containing the current tree location to the forest_pos store
+local function forest_pos_remember(self, target)
+	local forest_pos = self:recall("forest_pos")
+	if forest_pos == nil then
+		forest_pos = {}
+	end
+	local chunk_pos = wayzone.normalize_pos(target)
+	local chunk_hash = minetest.hash_node_position(chunk_pos)
+	if forest_pos[chunk_hash] == nil then
+		forest_pos[chunk_hash] = true
+		self:remember("forest_pos", forest_pos)
+		log.action("%s: forest_pos added %x %s", self.inventory_name,
+			chunk_hash, minetest.pos_to_string(chunk_pos))
+	end
+end
 
-		local my_pos = self.object:get_pos()
-		local ret = {}
-
-		-- Do we have any trees nearby?
-		local target = func.search_surrounding(my_pos, find_tree, searching_range, ret)
-		if target == nil then
-			return true -- no, done
-		end
-
-		-- grab the bottom of the tree
-		target = ret.tree[1]
-		local log_node = minetest.get_node(target)
-
-		-- find a valid position near the tree
-		local destination = working_villages.nav:find_standable_near(target, vector.new(3, 2, 3), self.object:get_pos())
-		if destination == nil then
-			log.warning("tree failure: no adjacent walkable found to %s", minetest.pos_to_string(target))
-			mark_tree_as_failed(ret.tree)
-			return true
-		end
-
-		log.action("selected tree %s @ %s stand=%s tc=%d lc=%d",
-			log_node.name,
-			minetest.pos_to_string(target),
-			minetest.pos_to_string(destination),
-			#ret.tree,
-			#ret.leaves)
-		self:set_displayed_action("cutting a tree")
-
-		-- We may not be able to reach the log
-		--local success, ret = self:go_to(destination, 5)
-		local success, msg = self:go_to(destination, 2, 5)
-		if not success then
-			working_villages.failed_pos_record(target)
-			self:set_displayed_action("looking at the unreachable log")
-			mark_tree_as_failed(ret.tree)
-			self:delay_seconds(10)
-			return true
-		end
-
-		while #ret.tree > 0 do
-			local log_arr = ret.tree
-			--if ret.tree[#ret.tree].y < ret.leaves[#ret.leaves].y then
-			--	log_arr = ret.leaves
-			--end
-			local log_pos = log_arr[#log_arr]
-			local log_node = minetest.get_node(log_pos)
-			if minetest.get_item_group(log_node.name, "tree") > 0 or
-			   minetest.get_item_group(log_node.name, "leaves") > 0
-			then
-				log.action("dig tree %s [%s] @ %s tc=%d lc=%d",
-					minetest.pos_to_string(log_pos), log_node.name,
-					minetest.pos_to_string(destination),
-					#ret.tree,
-					#ret.leaves)
-
-				success, msg = self:dig(log_pos,true,false)
-				if not success then
-					mark_tree_as_failed(ret.tree)
-					self:set_displayed_action("confused as to why cutting failed")
-					log.action("FAIL dig tree %s @ %s tc=%d lc=%d msg=%s",
-						minetest.pos_to_string(log_pos),
-						minetest.pos_to_string(destination),
-						#ret.tree,
-						#ret.leaves, msg)
-					self:delay(100)
-					break
-				end
-
-				log.action("SUCCESS dig tree %s [%s] @ %s tc=%d lc=%d",
-					minetest.pos_to_string(log_pos), log_node.name,
-					minetest.pos_to_string(destination),
-					#ret.tree,
-					#ret.leaves)
-				table.remove(ret.tree)
+-- find the closest forest position, do not remove it
+local function forest_pos_recall(self)
+	local my_pos = self.object:get_pos()
+	local forest_pos = self:recall("forest_pos")
+	if forest_pos ~= nil then
+		local best
+		for hash, _ in pairs(forest_pos) do
+			local pos = minetest.get_position_from_hash(hash)
+			local dist = vector.distance(my_pos, pos)
+			if best == nil or best.dist > dist then
+				best = { pos=pos, dist=dist, hash=hash }
 			end
+		end
+		if best ~= nil then
+			log.action("%s: forest_pos selected %x %s", self.inventory_name,
+				best.hash, minetest.pos_to_string(best.pos))
+			return best.pos
+		end
+	end
+	return nil
+end
+
+-- Use this to forget a forest. this should be done if there are no trees OR
+-- planted saplings in this chunk AND we tried going there from a remembered position.
+local function forest_pos_forget(self, target)
+	local forest_pos = self:recall("forest_pos")
+	if forest_pos ~= nil then
+		local chunk_pos = wayzone.normalize_pos(target)
+		local chunk_hash = minetest.hash_node_position(chunk_pos)
+		if forest_pos[chunk_hash] ~= nil then
+			forest_pos[chunk_hash] = nil
+			self:remember("forest_pos", forest_pos)
+			log.action("%s: forest_pos removed %x %s", self.inventory_name,
+				chunk_hash, minetest.pos_to_string(chunk_pos))
+		end
+	end
+end
+
+--local function search_chunk_for_trees(self, cpos)
+--	log.action(" -- forest check @ %s", minetest.pos_to_string(cpos))
+--	local ret = {}
+--	local target = func.search_surrounding(cpos, find_tree, searching_range, ret)
+--	if target == nil then
+--		return nil -- no trees in this area
+--	end
+--
+--	-- find a valid position near the tree
+--	return working_villages.nav:find_standable_near(ret.tree[1], vector.new(3, 2, 3), self.object:get_pos())
+--end
+
+--local function task_search_tree(self)
+--	log.action("%s: Searching for a forest @ %s", self.inventory_name, minetest.pos_to_string(self.stand_pos))
+--
+--	while true do
+--		self:set_displayed_action("searching for a forest")
+--		self:stand_still()
+--
+--		-- check memory for the last few tree positions
+--		while true do
+--			local pos = forest_pos_recall(self)
+--			if pos == nil then
+--				break
+--			end
+--			self:go_to(pos)
+--			local ret = {}
+--			local target = func.search_surrounding(self.object:get_pos(), find_tree, searching_range, ret)
+--			if target == nil then
+--				forest_pos_forget(self, pos)
+--			end
+--		end
+--
+--		-- TODO: check village storage for forest locations
+--
+--		-- do a random walk
+--		self:stand_still()
+--		self:set_displayed_action("looking for trees")
+--		local target = self:pick_random_location(16)
+--		if target ~= nil then
+--			self:go_to(target)
+--		end
+--		self:stand_still()
+--		self:delay_steps(10)
+--	end
+--	return true
+--end
+---- add with priority higher than chop_tree, as this moves to a forest
+--working_villages.register_task("search_tree", { func = task_search_tree, priority = 29 })
+
+local function find_nearby_tree(self, pos)
+	log.warning("%s: find_nearby_tree %s", self.inventory_name, minetest.pos_to_string(pos))
+	local tree_info = {}
+	local target = func.search_surrounding(pos, find_tree, searching_range, tree_info)
+	if target == nil then
+		return nil
+	end
+	return tree_info
+end
+
+-- do the actual tree chopping
+-- FIXME: move closer on the XZ plane for each log?
+local function chop_down_tree(self, info)
+	-- grab the bottom of the tree
+	local target = info.tree[1]
+	local log_node = minetest.get_node(target)
+
+	-- find a valid standing position near the tree
+	local destination = working_villages.nav:find_standable_near(target, vector.new(3, 2, 3), self.object:get_pos())
+	if destination == nil then
+		log.warning("tree failure: no adjacent walkable found to %s", minetest.pos_to_string(target))
+		mark_tree_as_failed(info.tree)
+		return
+	end
+
+	log.action("selected tree %s @ %s stand=%s tc=%d lc=%d",
+		log_node.name,
+		minetest.pos_to_string(target),
+		minetest.pos_to_string(destination),
+		#info.tree,
+		#info.leaves)
+	self:set_displayed_action("cutting a tree")
+
+	-- We may not be able to reach the log
+	--local success, ret = self:go_to(destination, 5)
+	local success, msg = self:go_to(destination, 2, 5)
+	if not success then
+		working_villages.failed_pos_record(target)
+		self:set_displayed_action("looking at the unreachable log")
+		mark_tree_as_failed(info.tree)
+		self:delay_seconds(10)
+		return true
+	end
+
+	while #info.tree > 0 do
+		local log_arr = info.tree
+		--if info.tree[#info.tree].y < info.leaves[#info.leaves].y then
+		--	log_arr = info.leaves
+		--end
+		local log_pos = log_arr[#log_arr]
+		local log_node = minetest.get_node(log_pos)
+		if minetest.get_item_group(log_node.name, "tree") > 0 or
+			minetest.get_item_group(log_node.name, "leaves") > 0
+		then
+			log.action("dig tree %s [%s] @ %s tc=%d lc=%d",
+				minetest.pos_to_string(log_pos), log_node.name,
+				minetest.pos_to_string(destination),
+				#info.tree,
+				#info.leaves)
+
+			-- FIXME: we need to adjust the 'dig' time based on the tool
+			success, msg = self:dig(log_pos,true,false)
+			if not success then
+				mark_tree_as_failed(info.tree)
+				self:set_displayed_action("confused as to why cutting failed")
+				log.action("FAIL dig tree %s @ %s tc=%d lc=%d msg=%s",
+					minetest.pos_to_string(log_pos),
+					minetest.pos_to_string(destination),
+					#info.tree,
+					#info.leaves, msg)
+				self:delay(100)
+				break
+			end
+
+			log.action("SUCCESS dig tree %s [%s] @ %s tc=%d lc=%d",
+				minetest.pos_to_string(log_pos), log_node.name,
+				minetest.pos_to_string(destination),
+				#info.tree,
+				#info.leaves)
+			table.remove(info.tree)
 		end
 		self:delay_steps(2)
 	end
 end
+
+local function task_chop_tree(self)
+	while true do
+		self:set_displayed_action("looking for a tree to cut")
+
+		local cnt = self:count_inventory_one("tree")
+		log.action("%s: top of loop, cnt=%d", self.inventory_name, cnt)
+		if cnt > 50 then
+			log.action("%s: too many trees (%d), need to drop off in chest", self.inventory_name, cnt)
+			return true
+		end
+
+		-- Do we have any trees nearby?
+		local tree_info = self.task_data.chop_tree_info
+		if tree_info ~= nil then
+			self.task_data.chop_tree_info = nil
+		else
+			tree_info = find_nearby_tree(self, self.object:get_pos())
+			if tree_info == nil then
+				local target = self:pick_random_location(16)
+				if target ~= nil then
+					self:go_to(target)
+				end
+				self:stand_still()
+				self:delay_steps(10)
+			end
+		end
+
+		if tree_info ~= nil then
+			log.action("%s: tree @ %s", self.inventory_name, minetest.pos_to_string(tree_info.tree[1]))
+			forest_pos_remember(self, tree_info.tree[1])
+			chop_down_tree(self, tree_info)
+		else
+			log.action("%s: no tree to chop", self.inventory_name)
+		end
+	end
+end
 working_villages.register_task("chop_tree", { func = task_chop_tree, priority = 30 })
 
+local function find_chest(self)
+	local chest_pos = self.pos_data.chest_pos
+	if chest_pos == nil then
+		local chest_pos = func.search_surrounding(self.object:get_pos(), func.is_chest, searching_range)
+		if chest_pos == nil then
+			log.action("%s: I could use a chest", self.inventory_name)
+			return nil
+		end
+
+		log.action("%s: taking over chest @ %s", self.inventory_name, minetest.pos_to_string(chest_pos))
+		self.pos_data.chest_pos = chest_pos
+	end
+	return chest_pos
+end
 
 local function task_store_in_chest(self)
 	local chest_pos = self.pos_data.chest_pos
@@ -309,22 +449,51 @@ end
 working_villages.register_task("store_in_chest", { func = task_store_in_chest, priority = 25 })
 
 --
-local function check_woodcutter(self)
-	-- only add the tasks if the active priority is lower than 30
-	if (self.task.priority or 0) < 30 then
-		self:count_timer("woodcutter:search")
-		if self:timer_exceeded("woodcutter:search", 60) then
-			local grp_cnt = self:count_inventory({"tree", "sapling"})
-			if grp_cnt.sapling < 16 then
-				self:task_add("gather_saplings")
+local function check_woodcutter(self, start_work, stop_work)
+	if stop_work then
+		log.action("%s: stopping work", self.inventory_name)
+		self:task_del("gather_items")
+		self:task_del("plant_saplings")
+		self:task_del("chop_tree")
+		return
+	end
+
+	-- check work tasks every 5 seconds
+	if func.timer(self, 5) then
+		local grp_cnt = self:count_inventory({"tree", "sapling"})
+
+		-- gather saplings
+		if start_work and grp_cnt.sapling < 16 then
+			local items = self:get_nearby_objects_by_condition(is_sapling)
+			if #items > 0 then
+				for _, item in ipairs(items) do
+					table.insert(self.task_data.gather_items, item)
+				end
+				self:task_add("gather_items")
 			end
-			if grp_cnt.sapling > 0 then
+		end
+
+		-- plant saplings
+		if start_work and grp_cnt.sapling > 0 then
+			local target = func.search_surrounding(self.object:get_pos(), is_sapling_spot, searching_range)
+			if target ~= nil then
+				self.task_data.plant_sapling_pos = target
 				self:task_add("plant_saplings")
 			end
-			if grp_cnt.tree < 50 then
+		end
+
+		if start_work and grp_cnt.tree < 50 then
+			if self.task_data.chop_tree_info == nil then
+				self.task_data.chop_tree_info = find_nearby_tree(self, self.object:get_pos())
+			end
+			if self.task_data.chop_tree_info ~= nil then
 				self:task_add("chop_tree")
 			end
-			if grp_cnt.tree >= 50 then
+		end
+
+		-- storing in chest if full or day is over and we have some leftover
+		if grp_cnt.tree >= 50 or (grp_cnt.tree > 0 and not start_work) then
+			if find_chest(self) ~= nil then
 				self:task_add("store_in_chest")
 			end
 		end
@@ -336,14 +505,17 @@ This should activate or disable tasks based on the time of day and the highest
 priority task. It runs as part of the on_step() callback, so it should be quick.
 ]]
 local function woodcutter_logic(self)
-	-- handle the night check
-	tasks.check_sleeptime(self)
+	if func.timer(self, 1) then
+		local names = tasks.check_schedule(self)
 
-	-- custom woodcutter tasks
-	check_woodcutter(self)
+		log.action("%s: work_start=%s work_stop=%s", self.inventory_name, names.work_start, names.work_stop)
 
-	-- make sure the idle task is present
-	tasks.check_idle(self)
+		-- custom woodcutter tasks
+		check_woodcutter(self, names.work_start, names.work_stop)
+
+		-- make sure the idle task is present
+		tasks.check_idle(self)
+	end
 end
 
 working_villages.register_job("working_villages:job_woodcutter", {

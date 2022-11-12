@@ -71,9 +71,8 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 
 	while true do
 		self:set_animation(working_villages.animation_frames.WALK)
-		local cur_pos = vector.round(self.object:get_pos())
 		if self.cur_goal == nil then
-			self.cur_goal = wzp:next_goal(cur_pos)
+			self.cur_goal = wzp:next_goal(self.stand_pos)
 			if self.cur_goal == nil then
 				break
 			end
@@ -121,7 +120,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 		-- follow path
 		--if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
 		--if self:is_near(self.path[1], 1) then
-		if is_same_vec(cur_pos, self.cur_goal) then
+		if is_same_vec(self.object:get_pos(), self.cur_goal) then
 			--log.action("jumping to %s", minetest.pos_to_string(self.path[1]))
 			--self.object:set_pos(self.path[1])
 			--table.remove(self.path, 1)
@@ -208,6 +207,40 @@ function working_villages.villager:collect_nearest_item_by_condition(cond, searc
 	end
 end
 
+function working_villages.villager:collect_item(item)
+	local item_pos = item:get_pos()
+	local item_ent = item:get_luaentity()
+	if item_pos == nil or item_ent == nil then
+		-- lie and say we collected it, as it no longer exists
+		return true
+	end
+
+	local rpos = vector.round(item_pos)
+	if not working_villages.failed_pos_test(rpos) then
+		local stand_pos = working_villages.nav:find_standable_near(rpos, {x=1, y=2, z=1})
+		if stand_pos == nil then
+			log.action("no stand_pos around %s", minetest.pos_to_string(rpos))
+			working_villages.failed_pos_record(rpos)
+		else
+			local inv = self:get_inventory()
+
+			if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
+				log.action("Collecting %s @ %s stand=%s",
+					item_ent.itemstring,
+					minetest.pos_to_string(item_pos),
+					minetest.pos_to_string(stand_pos))
+				local ret, msg = self:go_to(stand_pos)
+				if ret ~= true then
+					log.action(" -- go_to fail %s", msg)
+				else
+					self:pickup_item(item)
+				end
+			end
+		end
+	end
+	return true
+end
+
 function working_villages.villager:collect_nearby_items_by_condition(cond, searching_range)
 	local items = self:get_items_by_condition(cond, searching_range)
 	if #items == 0 then
@@ -237,36 +270,7 @@ function working_villages.villager:collect_nearby_items_by_condition(cond, searc
 		end
 		local item = items[#items]
 		table.remove(items)
-		local pos = item:get_pos()
-		if pos ~= nil then
-			local rpos = vector.round(pos)
-
-			if working_villages.failed_pos_test(rpos) then
-				log.action("skipping previously failed pos %s", minetest.pos_to_string(rpos))
-			else
-				local stand_pos = working_villages.nav:find_standable_near(rpos, {x=1, y=2, z=1})
-				if stand_pos == nil then
-					log.action("no stand_pos around %s", minetest.pos_to_string(rpos))
-					working_villages.failed_pos_record(rpos)
-				else
-					log.action("collecting item at: %s", minetest.pos_to_string(pos))
-					local inv = self:get_inventory()
-
-					if inv:room_for_item("main", ItemStack(item:get_luaentity().itemstring)) then
-						log.action("Collecting %s @ %s stand=%s",
-							item:get_luaentity().itemstring,
-							minetest.pos_to_string(pos),
-							minetest.pos_to_string(stand_pos))
-						local ret, msg = self:go_to(stand_pos)
-						if ret ~= true then
-							log.action(" -- go_to fail %s", msg)
-						else
-							self:pickup_item(item)
-						end
-					end
-				end
-			end
-		end
+		self:collect_item(item)
 	end
 	return true
 end
@@ -597,7 +601,7 @@ function working_villages.villager:handle_night()
 end
 
 function working_villages.villager:goto_job()
-	log.action("villager %s is going home", self.inventory_name)
+	log.action("villager %s is going to the last job location", self.inventory_name)
 	if self.pos_data.job_pos==nil then
 		log.warning("villager %s couldn't find his job position",self.inventory_name)
 		self.job_data.in_work = true;

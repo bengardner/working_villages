@@ -1,6 +1,8 @@
 local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
 local pathfinder = working_villages.require("nav/pathfinder")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
+local func = working_villages.require("jobs/util")
 
 working_villages.animation_frames = {
 	STAND     = { x=  0, y= 79, },
@@ -199,14 +201,14 @@ end
 
 function working_villages.register_task(task_name, def)
 	if working_villages.registered_tasks[task_name] ~= nil then
-		log.warning("working_villages.register_task: exists %s", task_name)
+		log.warning("register_task: exists %s", task_name)
 	end
 	if def.func == nil then
-		log.warning("working_villages.register_task: %s missing func", task_name)
+		log.warning("register_task: %s missing func", task_name)
 		return
 	end
 	if def.priority == nil then
-		log.warning("working_villages.register_task: %s missing priority", task_name)
+		log.warning("register_task: %s missing priority", task_name)
 		return
 	end
 	def.name = task_name
@@ -225,24 +227,53 @@ function working_villages.register_egg(egg_name, def)
 
 		on_use = function(itemstack, user, pointed_thing)
 			if pointed_thing.above ~= nil and def.product_name ~= nil then
-			-- set villager's direction.
-			local new_villager = minetest.add_entity(pointed_thing.above, def.product_name)
-			new_villager:get_luaentity():set_yaw_by_direction(
-				vector.subtract(user:get_pos(), new_villager:get_pos())
-			)
-			new_villager:get_luaentity().owner_name = user:get_player_name()
-			new_villager:get_luaentity():update_infotext()
+				-- set villager's direction.
+				local new_villager = minetest.add_entity(pointed_thing.above, def.product_name)
+				new_villager:get_luaentity():set_yaw_by_direction(
+					vector.subtract(user:get_pos(), new_villager:get_pos())
+				)
+				new_villager:get_luaentity().owner_name = user:get_player_name()
+				new_villager:get_luaentity():update_infotext()
 
-			itemstack:take_item()
-			return itemstack
-		end
-		return nil
+				itemstack:take_item()
+				return itemstack
+			end
+			return nil
 		end,
 	})
 end
 
 local job_coroutines = working_villages.require("job_coroutines")
 local forms = working_villages.require("forms")
+
+-- copied from mobkit
+local function sensors()
+	local timer = 2
+	local pulse = 1
+	return function(self)
+		timer = timer - self.dtime
+		if timer < 0 then
+			pulse = pulse + 1 -- do full range every third scan
+			local range = self.view_range
+			if pulse > 2 then
+				pulse = 1
+			else
+				range = self.view_range * 0.5
+			end
+
+			local pos = self.object:get_pos()
+			self.nearby_objects = minetest.get_objects_inside_radius(pos, range)
+			-- remove self from the list
+			for i,obj in ipairs(self.nearby_objects) do
+				if obj == self.object then
+					table.remove(self.nearby_objects, i)
+					break
+				end
+			end
+			timer = 2
+		end
+	end
+end
 
 -- working_villages.register_villager registers a definition of a new villager.
 function working_villages.register_villager(product_name, def)
@@ -407,14 +438,15 @@ function working_villages.register_villager(product_name, def)
 			-- if static data is not empty string, this object has beed already created.
 			local data = minetest.deserialize(staticdata)
 
-			self.product_name = data["product_name"]
-			self.manufacturing_number = data["manufacturing_number"]
-			self.nametag = data["nametag"]
-			self.owner_name = data["owner_name"]
-			self.pause = data["pause"]
-			self.job_data = data["job_data"]
-			self.state_info = data["state_info"]
-			self.pos_data = data["pos_data"]
+			self.product_name = data.product_name
+			self.manufacturing_number = data.manufacturing_number
+			self.nametag = data.nametag
+			self.owner_name = data.owner_name
+			self.pause = data.pause
+			self.job_data = data.job_data
+			self.state_info = data.state_info
+			self.pos_data = data.pos_data
+			self.memory = data.memory
 
 			local inventory = create_inventory(self)
 			for list_name, list in pairs(data["inventory"]) do
@@ -423,9 +455,35 @@ function working_villages.register_villager(product_name, def)
 			fix_pos_data(self)
 		end
 
+		if type(self.memory) ~= "table" then
+			self.memory = {}
+		end
+
+		log.warning("on_activate %s", self.inventory_name)
+		self.sensefunc = sensors()
+
+		--hp
+		self.max_hp = self.max_hp or 10
+		self.hp = self.hp or self.max_hp
+		self.time_total = 0
+		self.water_drag = self.water_drag or 1
+
+		--armor
+		if type(self.armor_groups) ~= 'table' then
+			self.armor_groups={}
+		end
+		--self.armor_groups.immortal = 1
+		--self.object:set_armor_groups(self.armor_groups)
+
+		self.buoyancy = self.buoyancy or 0
+		self.oxygen = self.oxygen or self.lung_capacity
+		self.lastvelocity = {x=0,y=0,z=0}
+		self.sensefunc=sensors()
+
 		-- create task stuff
-		self.task_queue = {}
-		self.task = {}
+		self.task_queue = {} -- queue of tasks to run
+		self.task_data = {}  -- misc data for the task
+		self.task = {}       -- active task name and priority
 
 		self:set_displayed_action("active")
 
@@ -434,7 +492,7 @@ function working_villages.register_villager(product_name, def)
 		}
 
 		self.object:set_velocity{x = 0, y = 0, z = 0}
-		self.object:set_acceleration{x = 0, y = -self.initial_properties.weight, z = 0}
+		self.object:set_acceleration{x = 0, y = func.gravity, z = 0}
 
 		--legacy
 		if type(self.pause) == "string" then
@@ -462,18 +520,20 @@ function working_villages.register_villager(product_name, def)
 	end
 
 	-- get_staticdata is a callback function that is called when the object is destroyed.
+	-- it is used to save any instance data that needs to be preserved
 	local function get_staticdata(self)
 		local inventory = self:get_inventory()
 		local data = {
-			["product_name"] = self.product_name,
-			["manufacturing_number"] = self.manufacturing_number,
-			["nametag"] = self.nametag,
-			["owner_name"] = self.owner_name,
-			["inventory"] = {},
-			["pause"] = self.pause,
-			["job_data"] = self.job_data,
-			["state_info"] = self.state_info,
-			["pos_data"] = self.pos_data,
+			product_name = self.product_name,
+			manufacturing_number = self.manufacturing_number,
+			nametag = self.nametag,
+			owner_name = self.owner_name,
+			inventory = {},
+			pause = self.pause,
+			job_data = self.job_data,
+			state_info = self.state_info,
+			pos_data = self.pos_data,
+			memory = self.memory,
 		}
 
 		-- set lists.
@@ -488,26 +548,55 @@ function working_villages.register_villager(product_name, def)
 	end
 
 	-- on_step is a callback function that is called every delta times.
-	local function on_step(self, dtime)
-		--[[ if owner didn't login, the villager does nothing.
-		-- perhaps add a check for this to be used in jobfuncs etc.
-		if not minetest.get_player_by_name(self.owner_name) then
-			return
-		end--]]
+	local function on_step(self, dtime, colinfo)
+		-- copied from mobkit
+		self.dtime = math.min(dtime,0.2)
+		self.colinfo = colinfo
+		self.height = func.get_box_height(self)
 
-		self:handle_liquids()
-
-		-- pickup surrounding item.
-		self:pickup_items()
-
-		if self.pause then
-			return
+		-- physics comes first
+		local vel = self.object:get_velocity()
+		if colinfo then
+			self.isonground = colinfo.touching_ground
+			-- get the node that we are standing on
+			for _, ci in ipairs(colinfo.collisions) do
+				if ci.type == "node" then
+					--log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
+					if ci.axis == 'y' then
+						local rpos = vector.round(ci.node_pos)
+						if self.stand_pos == nil or not vector.equals(self.stand_pos, rpos) then
+							-- FIXME: why is this logging constantly? is something else clearing it?
+							--log.action("set stand_pos=%s", minetest.pos_to_string(rpos))
+							self.stand_pos = rpos
+						end
+						break
+					end
+				end
+			end
+		else
+			if self.lastvelocity.y==0 and vel.y==0 then
+				self.isonground = true
+			else
+				self.isonground = false
+			end
 		end
-		if self.logic ~= nil then
-			self.logic(self)
+		self:physics()
+
+		if not self.pause then
+			-- pickup surrounding item.
+			self:pickup_items()
+
+			if self.logic then
+				if self.view_range then
+					self:sensefunc()
+				end
+				self:logic()
+				self:task_execute()
+			end
 		end
-		self:task_execute(dtime)
-		--job_coroutines.resume(self,dtime)
+
+		self.lastvelocity = self.object:get_velocity()
+		self.time_total = self.time_total + self.dtime
 	end
 
 	-- on_rightclick is a callback function that is called when a player right-click them.
@@ -532,9 +621,9 @@ function working_villages.register_villager(product_name, def)
 	-- register a definition of a new villager.
 
 	local villager_def = working_villages.villager:new({
+		-- these are the required minetest "Object properties"
 		initial_properties = {
-			hp_max                      = def.hp_max,
-			weight                      = def.weight,
+			hp_max                      = def.hp_max, -- valid, unused
 			mesh                        = def.mesh,
 			textures                    = def.textures,
 
@@ -549,46 +638,54 @@ function working_villages.register_villager(product_name, def)
 			makes_footstep_sound        = true,
 			automatic_face_movement_dir = false,
 			infotext                    = "",
-			nametag                     = "",
+			nametag                     = "hello",
 			static_save                 = true,
 			show_on_minimap             = true,
-		}
+			damage_texture_modifier     = "^[brighten",
+		},
+
+		-- extra initial properties
+		weight                      = def.weight, -- ??
+		max_hp                      = def.hp_max or 10,
+
+		pause                       = false,
+		disp_action                 = "inactive\nNo job",
+		state                       = "job",
+		state_info                  = "I am doing nothing particular.",
+		job_thread                  = false,
+		product_name                = "",
+		manufacturing_number        = -1,
+		owner_name                  = "",
+		time_counters               = {},
+		destination                 = vector.new(0,0,0),
+		job_data                    = {},
+		pos_data                    = {},
+		new_job                     = "",
+
+		view_range                  = 10, -- can see objects in this range
+		lung_capacity               = 30, -- seconds
+
+		-- callback methods
+		on_activate                 = on_activate,
+		on_step                     = on_step,
+		on_rightclick               = on_rightclick,
+		on_punch                    = on_punch,
+		get_staticdata              = get_staticdata,
+
+		-- storage methods
+		get_stored_table            = working_villages.get_stored_villager_table,
+		set_stored_table            = working_villages.set_stored_villager_table,
+		clear_cached_table          = working_villages.clear_cached_villager_table,
+
+		-- home methods
+		get_home                    = working_villages.get_home,
+		has_home                    = working_villages.is_valid_home,
+		set_home                    = working_villages.set_home,
+		remove_home                 = working_villages.remove_home,
 	})
 
-	-- extra initial properties
-	villager_def.pause                       = false
-	villager_def.disp_action                 = "inactive\nNo job"
-	villager_def.state                       = "job"
-	villager_def.state_info                  = "I am doing nothing particular."
-	villager_def.job_thread                  = false
-	villager_def.product_name                = ""
-	villager_def.manufacturing_number        = -1
-	villager_def.owner_name                  = ""
-	villager_def.time_counters               = {}
-	villager_def.destination                 = vector.new(0,0,0)
-	villager_def.job_data                    = {}
-	villager_def.pos_data                    = {}
-	villager_def.new_job                     = ""
-
-	-- callback methods
-	villager_def.on_activate                 = on_activate
-	villager_def.on_step                     = on_step
-	villager_def.on_rightclick               = on_rightclick
-	villager_def.on_punch                    = on_punch
-	villager_def.get_staticdata              = get_staticdata
-
-	-- storage methods
-	villager_def.get_stored_table            = working_villages.get_stored_villager_table
-	villager_def.set_stored_table            = working_villages.set_stored_villager_table
-	villager_def.clear_cached_table          = working_villages.clear_cached_villager_table
-
-	-- home methods
-	villager_def.get_home                    = working_villages.get_home
-	villager_def.has_home                    = working_villages.is_valid_home
-	villager_def.set_home                    = working_villages.set_home
-	villager_def.remove_home                 = working_villages.remove_home
-
 	minetest.register_entity(name, villager_def)
+	log.warning("registered %s", name)
 
 	-- register villager egg.
 	working_villages.register_egg(name .. "_egg", {

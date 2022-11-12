@@ -76,13 +76,15 @@ end
 working_villages.register_task("idle_rest", { func = task_rest, priority = 11 })
 
 local function task_wander(self)
-	self:set_displayed_action("taking a walk")
 	local end_clock = os.clock() + math.random(10, 30)
 	while os.clock() < end_clock do
+		self:stand_still()
+		self:set_displayed_action("taking a walk")
 		local target = self:pick_random_location()
 		if target ~= nil then
 			self:go_to(target)
 		end
+		self:stand_still()
 		self:delay_steps(10)
 	end
 	return true
@@ -171,15 +173,59 @@ working_villages.register_task("goto_bed", { func = task_goto_bed, priority = 50
 
 -------------------------------------------------------------------------------
 
--- Checks to see if it is nighttime and adds the "goto_bed" task
-function tasks.check_sleeptime(self)
-	local tod = minetest.get_timeofday()
+--[[
+Requires @tod_min and @tod_max to set the schedule bounds.
+If @name is set and the schedule is active, the name will be included in the
+key-val table returned from this function.
+If @task is set, this will add or remove the task based on the schedule.
+@priority is optional and is passed to self:task_add()
+]]
+local example_schedule = {
+	{ tod_min=0.000, tod_max=0.200, name="sleep", task="goto_bed", priority=nil },
+	{ tod_min=0.800, tod_max=1.000, name="sleep", task="goto_bed", priority=nil },
+	{ tod_min=0.300, tod_max=0.600, name="work_start" }, -- start work jobs
+	{ tod_min=0.700, tod_max=1.000, name="work_stop" },  -- terminate work jobs
+}
 
-	if self:is_sleep_time() then
-		self:task_add("goto_bed")
-	else
-		self:task_del("goto_bed", "not night")
+--[[
+Checks the schedule to see what we are supposed to be doing.
+
+Sets self.task_data.work_time=true during work hours.
+Queues other tasks as appropriate.
+]]
+function tasks.check_schedule(self, the_schedule)
+	the_schedule = the_schedule or example_schedule
+	local tod = minetest.get_timeofday()
+	local all_tasks = {} -- need all tasks to know which to disable
+	local active = {}    -- enable these tasks
+	local names = {}
+
+	log.action("%s:check_schedule tod=%s", self.inventory_name, tostring(tod))
+
+	for _, ent in ipairs(example_schedule) do
+		if ent.task ~= nil then
+			all_tasks[ent.task] = true
+		end
+		if tod >= ent.tod_min and tod <= ent.tod_max then
+			names[ent.name] = true
+			if ent.task ~= nil then
+				active[ent.task] = ent
+			end
+		end
 	end
+
+	for task_name, _ in pairs(all_tasks) do
+		local ent = active[task_name]
+		if ent ~= nil then
+			log.action("%s: add %s", self.inventory_name, task_name)
+			self:task_add(task_name, ent.priority)
+		else
+			log.action("%s: del %s", self.inventory_name, task_name)
+			self:task_del(task_name, "schedule")
+		end
+	end
+
+	return names
 end
 
 -- Adds the "idle" task if there is no other task
@@ -188,6 +234,22 @@ function tasks.check_idle(self)
 		self:task_add("idle")
 	end
 end
+
+-------------------------------------------------------------------------------
+
+-- gather all the items in self.task_data.gather_items
+local function task_gather_items(self)
+	while true do
+		local item = func.pop_last(self.task_data.gather_items)
+		if item == nil then
+			break
+		end
+		self:collect_item(item)
+		self:delay_seconds(2)
+	end
+	return true
+end
+working_villages.register_task("gather_items", { func = task_gather_items, priority = 40 })
 
 -------------------------------------------------------------------------------
 

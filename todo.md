@@ -2,12 +2,29 @@
 
 This is a list of things that I want to do.
 
+## Janky movement
+
+I tried porting parts of mobkit and the movement is really jumpy when trying to navigate. Not sure why.
+Possibly a bad gravity value or jump value.
+
+## Auto-create a village
+
+If a villager doesn't have a home or village then create shelter.
+
+
 ## Pickup stuff -- better check for finding place we can stand.
 
 Use new working_village.nav:find_standable_near() for pickup verification.
 No point in trying to 
 
 ## Pathfinder
+
+## AI glitch
+
+-- can't add planter, etc, tasks unless we find a spot or tree.
+-- causes glitches in the random walk otherwise.
+-- maybe stop for a while?
+   -- MOB has saplings, but there is no spot nearby to plant -- check every 30 seconds?
 
 ## Current position
 
@@ -16,22 +33,6 @@ Saw the MOB get stuck on a corner between 4 nodes.
 There were 3 present and the on missing was 2-deep.
 
 The collision box for the MOB is colliding with a neighbor node. We have to assume that we are standing on the ground.
-
-If the current position isn't good, then:
-if x > 0.5 then try x+1
-if x < 0.5 then try x-1
-Same for Z.
-
-b0: x > z
-b1: ax > 0.1
-b2: az > 0.1
-b3: ax > 0
-b4: az > 0
-
-if drx > 0.6 then we will try node to +x
-if drz > 0.6 then we will try node to +z
-if both then we will try node to +x, +z
-
 
 
 ### Cost Adjustments

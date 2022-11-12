@@ -1,6 +1,15 @@
+--[[
+This file should contain everything needed for a dumb villager.
+No logic/brain stuff here.
+ - creation
+ - egg
+ - physic
+ - utility functions
+]]
 local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
 local pathfinder = working_villages.require("nav/pathfinder")
+local func = working_villages.require("jobs/util")
 
 ---------------------------------------------------------------------
 
@@ -23,6 +32,10 @@ end
 Add up all the inventory items by group for the list of groups.
 For example, the woodcutter would want { "tree", "sapling" } to see if
 it over the carry limit.
+
+REVISIT: maybe a key/value pair where the key is the variable to set and the
+   val is either a group name, a table of group names or a function to call to
+   determine if it should be counted.
 ]]
 function villager:count_inventory(groups)
 	local inv = self:get_inventory()
@@ -44,6 +57,7 @@ function villager:count_inventory(groups)
 	return grp_cnt
 end
 
+-- REVISIT: probably going to remove this
 function villager:count_inventory_one(group_name)
 	return self:count_inventory({group_name})[group_name]
 end
@@ -171,6 +185,22 @@ function villager:get_items_by_condition(cond, range_distance)
 			local found_item = ItemStack(object:get_luaentity().itemstring):to_table()
 			if found_item ~= nil and cond(found_item, object:get_pos()) then
 				table.insert(items, object)
+			end
+		end
+	end
+	return items
+end
+
+-- Scans the list of self.nearby_objects and returns matches
+function villager:get_nearby_objects_by_condition(cond)
+	local items = {}
+	if self.nearby_objects ~= nil then
+		for _, object in pairs(self.nearby_objects) do
+			if not object:is_player() and object:get_luaentity() and object:get_luaentity().name == "__builtin:item" then
+				local found_item = ItemStack(object:get_luaentity().itemstring):to_table()
+				if found_item ~= nil and cond(found_item, object:get_pos()) then
+					table.insert(items, object)
+				end
 			end
 		end
 	end
@@ -459,6 +489,10 @@ function villager:update_infotext()
 	if self.pause then
 		infotext = infotext .. ", [paused]"
 	end
+	if self.task.name ~= nil then
+		infotext = infotext .. string.format("\ntask %s pri=%d", self.task.name, self.task.priority)
+	end
+
 	self.object:set_properties{infotext = infotext}
 end
 
@@ -501,7 +535,8 @@ function villager:jump()
 	if below_node.name == "air" then
 		return false
 	end
-	local jump_force = math.sqrt(self.initial_properties.weight) * 1.5
+	--local jump_force = math.sqrt(self.initial_properties.weight) * 1.5
+	local jump_force = -func.gravity * 1.5
 	if minetest.get_item_group(below_node.name,"liquid") > 0 then
 		local viscosity = minetest.registered_nodes[below_node.name].liquid_viscosity
 		jump_force = jump_force/(viscosity*100)
@@ -727,7 +762,7 @@ function villager:task_add(name, priority)
 
 	local new_info = { name=name, func=info.func, priority=priority or info.priority }
 	self.task_queue[name] = new_info
-	log.action("%s: added task %s priority %d", self.product_name, new_info.name, new_info.priority)
+	log.action("%s: added task %s priority %d", self.inventory_name, new_info.name, new_info.priority)
 	return true
 end
 
@@ -736,7 +771,7 @@ function villager:task_del(name, reason)
 	local info = self.task_queue[name]
 	if info ~= nil then
 		log.action("%s: removed task %s priority %d reason=%s",
-			self.product_name, info.name, info.priority, reason)
+			self.inventory_name, info.name, info.priority, reason)
 		self.task_queue[name] = nil
 	end
 end
@@ -831,12 +866,16 @@ function villager:sit_down()
 	self:set_animation(working_villages.animation_frames.SIT)
 end
 
-function villager:pick_random_location()
-	local start_pos = vector.round(self.object:get_pos())
+function villager:pick_random_location(radius)
+	radius = radius or 50
+	local start_pos = self.stand_pos
+	if not start_pos then
+		return nil
+	end
 	-- pick a random reachable location
 	for _=1,10 do
-		local dx = math.random(-50, 50)
-		local dz = math.random(-50, 50)
+		local dx = math.random(-radius, radius)
+		local dz = math.random(-radius, radius)
 		local target_pos = vector.new(start_pos.x + dx, start_pos.y, start_pos.z + dz)
 
 		local pp = working_villages.nav:find_standable_y(target_pos, 10, 10)
@@ -847,6 +886,129 @@ function villager:pick_random_location()
 	end
 	log.action("pick_random_location: nil")
 	return nil
+end
+
+--------------------------------------------------------------------
+
+-- default physics function called from on_step()
+-- copied from mobkit
+-- NOTE: working_villages' NPCs have 0 at the bottom of the model
+function villager:physics()
+	local vel = self.object:get_velocity()
+	local vnew = vector.new(vel)
+
+	-- dumb friction
+	if self.isonground and not self.isinliquid then
+		vnew = vector.new(vel.x > 0.2 and vel.x*func.friction or 0,
+		                  vel.y,
+		                  vel.z > 0.2 and vel.z*func.friction or 0)
+	end
+
+	-- bounciness
+	if self.springiness and self.springiness > 0 then
+		if colinfo and colinfo.collides then
+			for _,c in ipairs(colinfo.collisions) do
+				if c.old_velocity[c.axis] > 0.1 then
+					vnew[c.axis] = vnew[c.axis] * self.springiness * -1
+				end
+			end
+		end
+	end
+	self.object:set_velocity(vnew)
+
+	-- buoyancy
+	local surface = nil
+	local surfnodename = nil
+	-- FIXME: figure out what this is really doing
+	local spos = self:get_stand_pos() -- func.get_stand_pos()
+	spos.y = spos.y+0.01
+	-- get surface height
+	local snodepos = func.get_node_pos(spos)
+	local surfnode = func.nodeatpos(spos)
+	while surfnode and surfnode.drawtype == 'liquid' do
+		surfnodename = surfnode.name
+		surface = snodepos.y + 0.5
+		if surface > spos.y + self.height then
+			break
+		end
+		snodepos.y = snodepos.y + 1
+		surfnode = func.nodeatpos(snodepos)
+	end
+	self.isinliquid = surfnodename
+	if surface then -- standing in liquid
+		local submergence = math.min(surface - spos.y, self.height) / self.height
+		local buoyacc = func.gravity * (self.buoyancy - submergence)
+		func.set_acceleration(self.object,
+			vector.new(-vel.x * self.water_drag,
+			           buoyacc - vel.y * math.abs(vel.y) * 0.4,
+			           -vel.z * self.water_drag))
+	else
+		local npos = func.get_node_pos(spos)
+		-- not in liquid
+		if pathfinder.is_node_climbable(npos) then
+			--go down slowly
+			--ctrl:set_acceleration{x = 0, y = -0.1, z = 0}
+			self.object:set_acceleration{x = 0, y = 0, z = 0}
+		else
+			-- Mobs can stand on climbable nodes, but the engine doesn't collide, so
+			-- they fall. Stop that.
+			if pathfinder.is_node_climbable(vector.new(npos.x, npos.y-1, npos.z)) then
+				self.object:set_acceleration{x = 0, y = 0, z = 0}
+			else
+				-- fall. If standing on a walkable node, the engine will stop the fall.
+				self.object:set_acceleration{x = 0, y=func.gravity*10, z = 0}
+			end
+		end
+	end
+end
+
+function villager:vitals()
+	-- vitals: fall damage
+	local vel = self.object:get_velocity()
+	local velocity_delta = abs(self.lastvelocity.y - vel.y)
+	if velocity_delta > func.safe_velocity then
+		self.hp = self.hp - floor(self.max_hp * min(1, velocity_delta / func.terminal_velocity))
+	end
+
+	-- vitals: oxygen
+	if self.lung_capacity then
+		local colbox = self.object:get_properties().collisionbox
+		local headnode = func.nodeatpos(func.pos_shift(self.object:get_pos(),{y=colbox[5]})) -- node at hitbox top
+		if headnode and headnode.drawtype == 'liquid' then
+			self.oxygen = self.oxygen - self.dtime
+		else
+			self.oxygen = self.lung_capacity
+		end
+
+		if self.oxygen <= 0 then
+			self.hp = 0
+		end -- drown
+	end
+end
+
+function villager:get_stand_pos()
+	if self.stand_pos ~= nil then
+		return self.stand_pos
+	end
+	self.stand_pos = working_villages.nav:round_position(self.object:get_pos())
+	return self.stand_pos
+end
+
+--------------------------------------------------------------------
+
+-- Generic memory functions.
+-- Stuff in memory is serialized, never try to remember objectrefs.
+function villager:remember(key, val)
+	self.memory[key]=val
+	return val
+end
+
+function villager:forget(key)
+	self.memory[key] = nil
+end
+
+function villager:recall(key)
+	return self.memory[key]
 end
 
 --------------------------------------------------------------------

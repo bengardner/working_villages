@@ -492,13 +492,14 @@ local function scan_neighbor(nc, height, jump_height, fear_height)
 		local gy
 		for dy=1,jump_height do
 			if nc:get_dy(dy).clear then
+				--log.action("ground clear @ %d", dy)
 				gy = dy
 				break
 			end
 		end
 		if gy ~= nil then
 			-- check for clear nodes above gpos.y
-			for dy=0,height do
+			for dy=0,height-1 do
 				if not nc:get_dy(gy+dy).clear then
 					gy = nil
 					break
@@ -759,6 +760,17 @@ local function neighbors_collect_diag(neighbors, args)
 	for nidx, ndir in ipairs(dir_vectors) do
 		nc:set_pos(vector.add(args.pos, ndir))
 		n_info[nidx] = scan_neighbor(nc, args.height, args.jump_height, args.fear_height)
+	end
+
+	if args.debug > 3 then
+		for nidx, info in ipairs(n_info) do
+			log.action("  -- [%d] pos=%s gnd=%s walk=%s jump=%s water=%s", nidx,
+					   minetest.pos_to_string(info.npos),
+					   minetest.pos_to_string(info.gpos or vector.zero()),
+					   tostring(info.can_walk),
+					   tostring(info.can_jump),
+					   tostring(info.in_water))
+		end
 	end
 
 	-- 2nd pass to evaluate 'clear' info to check diagonals
@@ -1049,16 +1061,18 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 		if current_values == nil then break end
 		max_walker_cnt = math.max(max_walker_cnt, posSet.count)
 
-		--log.action("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d vCnt=%d",
-		--	minetest.pos_to_string(current_values.pos), current_values.hash,
-		--	current_values.fCost, current_values.gCost, current_values.hCost, posSet.count, posSet.total)
+		if args.debug > 1 then
+			log.action("processing %s %x fCost=%d gCost=%d hCost=%d wCnt=%d vCnt=%d",
+				minetest.pos_to_string(current_values.pos), current_values.hash,
+				current_values.fCost, current_values.gCost, current_values.hCost, posSet.count, posSet.total)
+		end
 
 		-- Check for a walker in the destination zone.
 		-- Note that we only check the "best" walker.
 		if target_inside(target_area, current_values.pos, current_values.hash) then
-			--log.action(" walker %s is inside end_pos, hash=%x parent=%x gCost=%d",
-			--	minetest.pos_to_string(current_values.pos), current_values.hash,
-			--	current_values.parent or 0, current_values.gCost)
+			log.action(" walker %s is inside end_pos, hash=%x parent=%x gCost=%d",
+				minetest.pos_to_string(current_values.pos), current_values.hash,
+				current_values.parent or 0, current_values.gCost)
 			return collect_path(current_values.hash)
 		end
 
@@ -1073,8 +1087,10 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 				local old_item = posSet:get(neighbor.hash)
 				if old_item == nil or new_gCost < old_item.gCost then
 					local new_hCost = get_estimated_cost(neighbor.pos, target_pos)
-					--log.action(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d parent=%x",
-					--	minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost, current_values.hash)
+					if args.debug > 2 then
+						log.action(" walker %s %x cost=%d fCost=%d gCost=%d hCost=%d parent=%x",
+							minetest.pos_to_string(neighbor.pos), neighbor.hash, neighbor.cost, new_gCost+new_hCost, new_gCost, new_hCost, current_values.hash)
+					end
 					posSet:insert({
 						gCost = new_gCost,
 						hCost = new_hCost,

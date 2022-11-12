@@ -2,6 +2,74 @@ local func = {}
 local pathfinder = working_villages.require("nav/pathfinder")
 local log = working_villages.require("log")
 
+-- used in the physics stuff copied from mobkit
+func.gravity = -9.8
+func.friction = 0.4 -- less is more
+
+func.terminal_velocity = math.sqrt(2 * -func.gravity * 20) -- 20 meter fall = dead
+func.safe_velocity = math.sqrt(2 * -func.gravity * 5) -- 5 m safe fall
+
+-- return -1 or 1, depending on whether (x < 0)
+local function sign(x)
+	return (x < 0) and -1 or 1
+end
+func.sign = sign
+
+-- returns true approx every @sec seconds
+function func.timer(self, sec)
+	local t1 = math.floor(self.time_total)
+	local t2 = math.floor(self.time_total + self.dtime)
+	return (t2 > t1) and ((t2 % sec) == 0)
+end
+
+-- return the center of the node that contains @pos
+function func.get_node_pos(pos)
+	return vector.round(pos)
+end
+
+function func.nodeatpos(pos)
+	local node = minetest.get_node_or_nil(pos)
+	if node then
+		return minetest.registered_nodes[node.name]
+	end
+end
+
+-- vec components can be omitted e.g. vec={y=1}
+function func.pos_shift(pos, vec)
+	return vector.new(pos.x + (vec.x or 0), pos.y + (vec.y or 0), pos.z + (vec.z or 0))
+end
+
+-- thing can be luaentity or objectref.
+function func.get_stand_pos(thing)
+	local pos = {}
+	local colbox = {}
+	if type(thing) == 'table' then
+		pos = thing.object:get_pos()
+		colbox = thing.object:get_properties().collisionbox
+	elseif type(thing) == 'userdata' then
+		pos = thing:get_pos()
+		colbox = thing:get_properties().collisionbox
+	else
+		return false
+	end
+	return func.pos_shift(pos,{y=colbox[2]+0.01}), pos
+end
+
+function func.get_box_height(thing)
+	if type(thing) == 'table' then
+		thing = thing.object
+	end
+	local colbox = thing:get_properties().collisionbox
+	local height
+	if colbox then
+		height = colbox[5] - colbox[2]
+	else
+		height = 0.1
+	end
+	return height > 0 and height or 0.1
+end
+
+
 function func.find_path_toward(pos, villager)
 	local dest = vector.round(pos)
 	--TODO: spiral outward from pos and try to find reverse paths
@@ -62,6 +130,9 @@ There are two problems:
     is inside a walkable node. We need to bump y+1.
  2. We might be standing over air, but are really standing on a neighbor node.
     For this, we need to check the other 1-3 nodes in the 4-block area.
+
+In either case, we probably could get some of that info from the collision
+info passed to on_step(). Needs further investigation.
 ]]
 function func.adjust_stand_pos(pos)
 	local rpos = vector.round(pos)
@@ -98,17 +169,8 @@ function func.adjust_stand_pos(pos)
 
 		--log.action("  === pos=%s rpos=%s dpos=%s", minetest.pos_to_string(pos), minetest.pos_to_string(rpos), minetest.pos_to_string(dpos))
 
-		local sx, sz
-		if dpos.x < 0 then
-			sx = -1
-		else
-			sx = 1
-		end
-		if dpos.z < 0 then
-			sz = -1
-		else
-			sz = 1
-		end
+		local sx = sign(dpos.x)
+		local sz = sign(dpos.z)
 		-- We try side, side, diagonal
 		if math.abs(dpos.x) > 0.1 then
 			table.insert(arr_pos, vector.new(sx,0,0))
@@ -439,6 +501,30 @@ function func.pick_random(tab)
 			end
 			sel = sel - w
 		end
+	end
+	return nil
+end
+
+function func.minmax(v,m)
+	return math.min(math.abs(v), m) * sign(v)
+end
+
+function func.set_acceleration(thing, vec, limit)
+	limit = limit or 100
+	if type(thing) == 'table' then
+		thing = thing.object
+	end
+	vec.x = func.minmax(vec.x, limit)
+	vec.y = func.minmax(vec.y, limit)
+	vec.z = func.minmax(vec.z, limit)
+	thing:set_acceleration(vec)
+end
+
+function func.pop_last(tab)
+	if #tab > 0 then
+		local item = tab[#tab]
+		table.remove(tab)
+		return item
 	end
 	return nil
 end

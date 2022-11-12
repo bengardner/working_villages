@@ -80,7 +80,7 @@ function wayzone_store.get(args)
 		jump_height = args.jump_height or 1,
 		fear_height = args.fear_height or 2,
 		can_climb = (args.can_climb == nil or args.can_climb == true),
-		debug = 1
+		debug = 0,
 		}
 
 	self.key = string.format("h=%d;j=%d;f=%d;c=%s",
@@ -110,24 +110,24 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 	-- No point in looking at self-links if there are less than 2 wayzones OR
 	-- either wayzone chunk is empty (under gound).
 	if (from_wzc.hash == to_wzc.hash and #from_wzc < 2) or #from_wzc == 0 or #to_wzc == 0 then
-		log.action("wayzones_refresh_links: no point %x (%d) g=%d -> %x (%d) g=%d",
-			from_wzc.hash, #from_wzc, from_wzc.generation,
-			to_wzc.hash, #to_wzc, to_wzc.generation)
+		--log.action("wayzones_refresh_links: no point %x (%d) g=%d -> %x (%d) g=%d",
+		--	from_wzc.hash, #from_wzc, from_wzc.generation,
+		--	to_wzc.hash, #to_wzc, to_wzc.generation)
 		return
 	end
 
 	-- Did we already update the links for the current gen?
 	-- nil won't match a number if this is the first time.
 	if from_wzc:gen_is_current(to_wzc) then
-		log.action("wayzones_refresh_links: already updated  %x (%d) g=%d -> %x (%d) g=%d",
-			from_wzc.hash, #from_wzc, from_wzc.generation,
-			to_wzc.hash, #to_wzc, to_wzc.generation)
+		--log.action("wayzones_refresh_links: already updated  %x (%d) g=%d -> %x (%d) g=%d",
+		--	from_wzc.hash, #from_wzc, from_wzc.generation,
+		--	to_wzc.hash, #to_wzc, to_wzc.generation)
 		return
 	end
 
-	log.action("wayzones_refresh_links: updating %x (%d) g=%d -> %x (%d) g=%d",
-		from_wzc.hash, #from_wzc, from_wzc.generation,
-		to_wzc.hash, #to_wzc, to_wzc.generation)
+	--log.action("wayzones_refresh_links: updating %x (%d) g=%d -> %x (%d) g=%d",
+	--	from_wzc.hash, #from_wzc, from_wzc.generation,
+	--	to_wzc.hash, #to_wzc, to_wzc.generation)
 
 	-- clear existing links: from_wzc -> to_wzc
 	-- We don't care about incoming links, as we won't be using them.
@@ -146,8 +146,8 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 				--	from_wz.key, to_wz.key)
 				-- if from_wz exits into to_wz, then we have a winner
 				if from_wz:exited_to(to_wz) then
-					log.action(" + wayzone_link %s => %s g=%d",
-						from_wz.key, to_wz.key, to_wzc.generation)
+					--log.action(" + wayzone_link %s => %s g=%d",
+					--	from_wz.key, to_wz.key, to_wzc.generation)
 					-- FIXME: need to do a pathfinder.find_path() between the node
 					-- centers to get the real cost. Important to avoid water.
 					local cost = pathfinder.get_estimated_cost(from_wz:get_center_pos(), to_wz:get_center_pos())
@@ -254,9 +254,11 @@ local function process_chunk(self, chunk_hash)
 
 	-- process all the stand positions
 	for hash, tpos in pairs(nodes_to_scan) do
-		--log.action(" Probe Slot %s", minetest.pos_to_string(tpos))
 		-- don't process if it is part of another wayzone
 		if wzc:get_wayzone_for_pos(tpos) == nil then
+			if self.debug > 1 then
+				log.action(" Probe Slot %s", minetest.pos_to_string(tpos))
+			end
 			local visitHash, exitHash = pathfinder.wayzone_flood(tpos, area)
 			local wz = wzc:new_wayzone()
 			for h, _ in pairs(visitHash) do
@@ -318,7 +320,7 @@ function wayzone_store:chunk_get_by_hash(hash, no_load)
 	end
 	local pos = minetest.get_position_from_hash(hash)
 	if minetest.get_node_or_nil(pos) == nil then
-		log.warning("Chunk processed %x %s", hash, minetest.pos_to_string(pos))
+		log.warning("Chunk not loaded %x %s", hash, minetest.pos_to_string(pos))
 		minetest.load_area(pos)
 	end
 	wzc = process_chunk(self, hash)
@@ -424,7 +426,7 @@ returns {
 	}
 ]]
 function wayzone_store:get_pos_info(pos, where)
-	assert(pos ~= nil)
+	assert(pos ~= nil, "get_pos_info passed pos=nil")
 	local info = {}
 	info.pos = vector.round(pos) -- rounded to node coordinates
 	info.hash = minetest.hash_node_position(info.pos)
@@ -493,6 +495,7 @@ FIXME: We need to set some bounds around the search or this could scan a lot
 ]]
 function wayzone_store:find_path(start_pos, target_pos)
 	-- Grab the wayzone for start_pos and end_pos
+	start_pos = self:round_position(start_pos)
 	local si = self:get_pos_info(start_pos, "find_path.si")
 	local di = self:get_pos_info(target_pos, "find_path.di")
 
@@ -614,17 +617,17 @@ function wayzone_store:find_path(start_pos, target_pos)
 		local ff = fwd.posSet:pop_head()
 		local rr = rev.posSet:pop_head()
 
-		log.action("wayzone.find_path step fwd=%s rev=%s", ff.cur.key, rr.cur.key)
+		--log.action("wayzone.find_path step fwd=%s rev=%s", ff.cur.key, rr.cur.key)
 
 		-- does the fwd node join a rev closed record?
 		if ff.cur.key == di.wz.key or rev.posSet:get(ff.cur.key) ~= nil then
-			log.action("FWD done or found in REV -- need rollup")
+			--log.action("FWD done or found in REV -- need rollup")
 			return dual_rollup(ff.sl_key)
 		end
 
 		-- does the rev node join a fwd closed record?
 		if rr.cur.key == si.wz.key or fwd.posSet:get(rr.cur.key) ~= nil then
-			log.action("REV done or found in FWD -- need rollup")
+			--log.action("REV done or found in FWD -- need rollup")
 			return dual_rollup(rr.sl_key)
 		end
 
@@ -642,7 +645,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 				if xx_wz.exited[aidx] ~= nil then
 					local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
 					local n_chash = minetest.hash_node_position(n_cpos)
-					log.action("check adjacent %x %s", n_chash, minetest.pos_to_string(n_cpos))
+					--log.action("check adjacent %x %s", n_chash, minetest.pos_to_string(n_cpos))
 					local n_wzd = self:chunk_get_by_hash(n_chash)
 					if n_wzd ~= nil then
 						wayzones_refresh_links(xx_wzc, n_wzd)
@@ -662,7 +665,7 @@ function wayzone_store:find_path(start_pos, target_pos)
 			-- Add an entry for each link from this wayzone
 			for _, link in pairs(link_tab) do
 				local link_wzc = adj_hash[link.chash]
-				log.action("   + neighbor link %s => %s", xx_wz.key, link.key)
+				--log.action("   + neighbor link %s => %s", xx_wz.key, link.key)
 				if link_wzc == nil then
 					-- TODO: this is a link to a non-adjacent chunk. We need to check the gen of each
 					--       chunk in the chain and make sure they are current.
@@ -689,8 +692,77 @@ function wayzone_store:find_path(start_pos, target_pos)
 	log.warning("wayzone path fail: %s -> %s, steps=%d",
 		minetest.pos_to_string(si.pos),
 		minetest.pos_to_string(di.pos), steps)
-	log_all()
+	--log_all()
 	return nil
+end
+
+-------------------------------------------------------------------------------
+
+-- function that returns 1 chunk per call, in increasing distance
+-- up to the distance limit
+function wayzone_store:chunk_search(start_pos, max_distance)
+	log.action("chunk_search @ %s", minetest.pos_to_string(start_pos))
+	local si = self:get_pos_info(self.stand_pos or self:round_position(start_pos))
+	if si.wz == nil then
+		return nil
+	end
+
+	local wz_list = wlist_new()
+	local scanned_chunk = {} -- don't scan the same chunk multiple times
+
+	wz_list:insert({ cur={ pos=si.wzc.pos, hash=si.wzc.hash, index=si.wz.index, key=si.wz.key }, hCost=0, gCost=0 })
+
+	return function()
+		while wz_list.count > 0 do
+			local xx = wz_list:pop_head()
+			log.action("chunk_search %s %s", xx.cur.key, minetest.pos_to_string(xx.cur.pos))
+
+			local xx_wzc = self:chunk_get_by_hash(xx.cur.hash)
+			local xx_wz = xx_wzc[xx.cur.index]
+
+			-- iterate over the adjacent chunks, refresh links with this chunk
+			local adj_hash = {}
+			for aidx, exited in pairs(xx_wz.exited) do
+				if aidx ~= 1 then
+					local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
+					local n_chash = minetest.hash_node_position(n_cpos)
+					local n_wzd = self:chunk_get_by_hash(n_chash)
+					if n_wzd ~= nil then
+						wayzones_refresh_links(xx_wzc, n_wzd)
+						wayzones_refresh_links(n_wzd, xx_wzc)
+						adj_hash[n_chash] = n_wzd
+					end
+				end
+			end
+
+			-- add new walkers that are not out of range
+			local link_tab = xx_wz.link_to
+			for _, link in pairs(link_tab) do
+				local link_wzc = adj_hash[link.chash]
+				if link_wzc ~= nil then
+					local old_item = wz_list:get(link.key)
+					if old_item == nil then
+						local dist = vector.distance(link_wzc.pos, si.pos)
+						if dist < max_distance then
+							wz_list:insert({cur={
+								pos=link_wzc.pos,
+								hash=link.chash,
+								index=link.index,
+								key=link.key },
+								hCost=0, gCost=dist})
+						end
+					end
+				end
+			end
+
+			-- now process the chunk
+			if scanned_chunk[xx.cur.hash] == nil then
+				scanned_chunk[xx.cur.hash] = true
+				return xx.cur.pos
+			end
+		end
+		return nil
+	end
 end
 
 -------------------------------------------------------------------------------
@@ -823,19 +895,85 @@ function wayzone_store:is_reachable(start_pos, target_pos)
 end
 
 --[[
-Try to resolve the current position to the correct node position.
-This is usually just rounding, but we could be standing over a node, on a
-neighbor node.
+This adjusts pos to the nearest likely stand position.
+There are two problems:
+ 1. Stairs and slabs cause round() to drop down, so that the current position
+	is inside a walkable node. We need to bump y+1.
+ 2. We might be standing over air, but are really standing on a neighbor node.
+	For this, we need to check the other 1-3 nodes in the 4-block area.
 
- M
-  XX
-XXXX
+In either case, we probably could get some of that info from the collision
+info passed to on_step(). Needs further investigation.
+
+FIXME: move to pathfinder??
 ]]
 function wayzone_store:round_position(pos)
+	local rpos = vector.round(pos)
 
-	local wzpath = self:find_path(start_pos, target_pos)
-	return wzpath ~= nil
+	-- 1. If inside a walkable node, we go up by 1
+	local node = minetest.get_node(rpos)
+	if minetest.registered_nodes[node.name].walkable then
+		rpos.y = rpos.y + 1
+	end
+
+	-- 2. If over air, we need to shift a bit to over a neighbor node
+	local bpos = vector.new(rpos.x, rpos.y-1, rpos.z)
+	node = minetest.get_node(bpos)
+	if not minetest.registered_nodes[node.name].walkable then
+		local ret = {}
+		local function try_dpos(dpos)
+			if ret.pos ~= nil then
+				return
+			end
+			local tpos = vector.add(rpos, dpos)
+			--log.action("trying %s for %s", minetest.pos_to_string(tpos), pos)
+			node = minetest.get_node(tpos)
+			if not minetest.registered_nodes[node.name].walkable then
+				node = minetest.get_node(vector.new(tpos.x, tpos.y - 1, tpos.z))
+				if minetest.registered_nodes[node.name].walkable then
+					ret.pos = tpos
+					return true
+				end
+			end
+		end
+
+		local dpos = vector.subtract(pos, rpos) -- should be -0.5 to 0.5 on each axis
+		local arr_pos = {}
+
+		--log.action("  === pos=%s rpos=%s dpos=%s", minetest.pos_to_string(pos), minetest.pos_to_string(rpos), minetest.pos_to_string(dpos))
+
+		local sx = func.sign(dpos.x)
+		local sz = func.sign(dpos.z)
+		-- We try side, side, diagonal
+		if math.abs(dpos.x) > 0.1 then
+			table.insert(arr_pos, vector.new(sx,0,0))
+		end
+		if math.abs(dpos.z) > 0.1 then
+			table.insert(arr_pos, vector.new(0,0,sz))
+		end
+		if #arr_pos == 2 then
+			-- reverse the two if dz was bigger
+			if math.abs(dpos.x) < math.abs(dpos.z) then
+				arr_pos[1], arr_pos[2] = arr_pos[2], arr_pos[1]
+			end
+			-- add the diagonal
+			table.insert(arr_pos, vector.new(sx,0,sz))
+		end
+
+		-- try the positions in order
+		for _, dp in ipairs(arr_pos) do
+			if try_dpos(dp) then
+				break
+			end
+		end
+		if ret.pos ~= nil then
+			return ret.pos
+		end
+	end
+	return rpos
 end
+
+
 
 -------------------------------------------------------------------------------
 
