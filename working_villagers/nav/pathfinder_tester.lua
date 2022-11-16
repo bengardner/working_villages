@@ -10,6 +10,8 @@ local pathfinder = working_villages.require("nav/pathfinder")
 local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
 local wayzone_store = working_villages.require("nav/wayzone_store")
 
+local use_coroutine = false
+
 local function co_path(pos1, pos2)
 	local wzp = wayzone_path.start(pos1, pos2)
 
@@ -37,7 +39,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	local time_start = minetest.get_us_time()
 
 	local path
-	if use_coroutine ~= nil then
+	if use_coroutine == true then
 		--local wzp = waypoints.path_start(pos1, pos2)
 		local co = coroutine.create(co_path)
 		--minetest.log("action", "starting...")

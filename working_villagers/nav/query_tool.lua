@@ -94,7 +94,7 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		local ent = pointed_thing.ref:get_luaentity()
 		log.action("query_tool: object @ %s [%s]",
 			minetest.pos_to_string(ent.object:get_pos()),
-			ent.itemstring or ent.product_name or "unknown")
+			ent.inventory_name or ent.itemstring or ent.product_name or "unknown")
 		if not is_use then
 			if ent.object ~= nil then
 				log_object(ent.object)

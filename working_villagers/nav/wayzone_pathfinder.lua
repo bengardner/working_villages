@@ -20,6 +20,7 @@ Functions:
 local wayzone = working_villages.require("nav/wayzone")
 local wayzone_chunk = working_villages.require("nav/wayzone_chunk")
 local wayzone_store = working_villages.require("nav/wayzone_store")
+local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local log = working_villages.require("log")
 
 local pathfinder = working_villages.require("nav/pathfinder")
@@ -148,8 +149,9 @@ function wayzone_path:next_goal(mob_pos)
 			-- log the wayzone path
 			local cpos, cidx = wayzone.key_decode_pos(wz.key)
 			log.action(" wzpath[%d] = %s  %s:%d", idx, wz.key, minetest.pos_to_string(cpos), cidx)
+
+			wayzone_utils.put_marker(wz:get_center_pos(), "center")
 		end
-		--wayzones.show_particles_wzpath(self.wzpath, cur_pos, self.end_pos)
 
 		self.wzkeys = wzkeys
 	end

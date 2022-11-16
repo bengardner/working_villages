@@ -45,7 +45,7 @@ local function waypoint_tool_do_stuff(user, pointed_thing, is_use)
 			minetest.pos_to_string(pointed_thing.above), node_above.name,
 			minetest.pos_to_string(pointed_thing.under), node_under.name)
 
-		if pathfinder.can_stand_at(pointed_thing.above, 2) then
+		if pathfinder.can_stand_at(pointed_thing.above, 2, "tool") then
 			do_waypoint_flood(user, pointed_thing.above, is_use)
 		end
 	end

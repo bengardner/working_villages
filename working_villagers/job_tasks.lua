@@ -171,6 +171,38 @@ local function task_goto_bed(self)
 end
 working_villages.register_task("goto_bed", { func = task_goto_bed, priority = 50 })
 
+local function task_goto(self)
+	local target = self.destination
+	self.destination = nil
+	if target == nil then
+		return true
+	end
+
+	log.action("%s: I am going to %s", self.inventory_name, minetest.pos_to_string(target))
+	self:set_displayed_action("going to location")
+
+	local start_pos = self:get_stand_pos()
+
+	local pp = working_villages.nav:find_standable_y(target, 10, 10)
+	if pp ~= nil and working_villages.nav:is_reachable(start_pos, pp) then
+		log.action("pick_random_location: %s", minetest.pos_to_string(pp))
+		target = pp
+	end
+
+	self:go_to(target)
+	return true
+end
+working_villages.register_task("goto", { func = task_goto, priority = 20 })
+
+local function task_wait(self)
+	log.action("%s: I am waiting", self.inventory_name)
+	self:set_displayed_action("waiting")
+	self:stand_still()
+	self:delay_seconds(30)
+	return true
+end
+working_villages.register_task("wait", { func = task_wait, priority = 10 })
+
 -------------------------------------------------------------------------------
 
 --[[

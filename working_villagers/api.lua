@@ -14,6 +14,7 @@ working_villages.animation_frames = {
 }
 
 working_villages.registered_villagers = {}
+working_villages.active_villagers = {}
 
 working_villages.registered_jobs = {}
 
@@ -460,6 +461,8 @@ function working_villages.register_villager(product_name, def)
 			self.memory = {}
 		end
 
+		working_villages.active_villagers[self.inventory_name] = self
+
 		log.warning("on_activate: (below) inventory_name=%s", self.inventory_name)
 		self.sensefunc = sensors()
 
@@ -518,6 +521,11 @@ function working_villages.register_villager(product_name, def)
 				self:set_displayed_action("resting")
 			end
 		end
+	end
+
+	local function on_deactivate(self, removal)
+		log.warning("deactivate %s removal=%s", self.inventory_name, tostring(removal))
+		working_villages.active_villagers[self.inventory_name] = nil
 	end
 
 	-- get_staticdata is a callback function that is called when the object is destroyed.
@@ -680,6 +688,7 @@ function working_villages.register_villager(product_name, def)
 
 		-- callback methods
 		on_activate                 = on_activate,
+		on_deactivate               = on_deactivate,
 		on_step                     = on_step,
 		on_rightclick               = on_rightclick,
 		on_punch                    = on_punch,

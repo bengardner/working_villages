@@ -150,7 +150,8 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 					--	from_wz.key, to_wz.key, to_wzc.generation)
 					-- FIXME: need to do a pathfinder.find_path() between the node
 					-- centers to get the real cost. Important to avoid water.
-					local cost = pathfinder.get_estimated_cost(from_wz:get_center_pos(), to_wz:get_center_pos())
+					--local cost = pathfinder.get_estimated_cost(from_wz:get_center_pos(), to_wz:get_center_pos())
+					local cost = vector.distance(from_wz:get_center_pos(), to_wz:get_center_pos())
 					from_wz:link_add_to(to_wz, cost)
 					to_wz:link_add_from(from_wz, cost)
 				end
@@ -413,7 +414,8 @@ end
 -------------------------------------------------------------------------------
 
 local function wz_estimated_cost(start_wz, end_wz)
-	return pathfinder.get_estimated_cost(start_wz:get_center_pos(), end_wz:get_center_pos())
+	return vector.distance(start_wz:get_center_pos(), end_wz:get_center_pos())
+	--return pathfinder.get_estimated_cost(start_wz:get_center_pos(), end_wz:get_center_pos())
 end
 
 --[[
@@ -442,7 +444,7 @@ function wayzone_store:get_pos_info(pos, where)
 	the data is obsolete and we should re-processing the chunk data.
 	]]
 	if info.wz == nil then
-		if pathfinder.can_stand_at(info.pos, 2) then
+		if pathfinder.can_stand_at(info.pos, 2, "get_pos_info:"..where) then
 			-- should be able to stand at pos, so wayzone data is old
 			-- FIXME: warn for now. this should be rare, but noteworthy
 			log.warning("waypoint[%s]: reprocessing %x %s", where or "??",
@@ -493,9 +495,10 @@ FIXME: We need to set some bounds around the search or this could scan a lot
        of chunks! Maybe the whole map. This currently limited to 1000 steps,
        which means up to 2000 chunks can be checked.
 ]]
-function wayzone_store:find_path(start_pos, target_pos)
+function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- Grab the wayzone for start_pos and end_pos
-	start_pos = self:round_position(start_pos)
+	local start_pos = self:round_position(start_pos_raw)
+	log.action("find_path: start %s => %s", minetest.pos_to_string(start_pos_raw), minetest.pos_to_string(start_pos))
 	local si = self:get_pos_info(start_pos, "find_path.si")
 	local di = self:get_pos_info(target_pos, "find_path.di")
 
@@ -911,14 +914,13 @@ function wayzone_store:round_position(pos)
 	local rpos = vector.round(pos)
 
 	-- 1. If inside a walkable node, we go up by 1
-	local node = minetest.get_node(rpos)
-	if minetest.registered_nodes[node.name].walkable then
+	if pathfinder.is_node_collidable(rpos) then
 		rpos.y = rpos.y + 1
 	end
 
 	-- 2. If over air, we need to shift a bit to over a neighbor node
 	local bpos = vector.new(rpos.x, rpos.y-1, rpos.z)
-	node = minetest.get_node(bpos)
+	local node = minetest.get_node(bpos)
 	if not minetest.registered_nodes[node.name].walkable then
 		local ret = {}
 		local function try_dpos(dpos)
@@ -972,8 +974,6 @@ function wayzone_store:round_position(pos)
 	end
 	return rpos
 end
-
-
 
 -------------------------------------------------------------------------------
 

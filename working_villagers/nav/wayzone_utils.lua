@@ -216,6 +216,7 @@ local marker_def = {
 	start = {texture="testpathfinder_waypoint_start.png", size=4, time=5},
 	target = {texture="testpathfinder_waypoint_end.png", size=4, time=10},
 	node = {texture="testpathfinder_waypoint.png", size=4, time=5},
+	center = {texture="wayzone_center.png", size=5, time=5},
 }
 
 --[[

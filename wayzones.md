@@ -623,3 +623,42 @@ sub-tags = 0 to 8 in length
 
 0,0,0 => 0
 7,1,3 => 
+
+
+
+
+# TODO
+
+## Avoid walking next to ridges
++/- 1 has a penalty of 5
+-2 has a penalty of 10
+unwalkable has a penalty of 20
+
+## Disallow changing Y on a diagonal
+
+Diagonals only allowed on flat
+
+## Enhance the villager scepter
+
+left click to select/pause/resume villager
+
+left click on a node to tell selected villager to walk there. (to test pathfinding)
+
+
+## Try using raycasting to simplify traveling on easy terrain ??
+
+Not sure if it is usable, seeing as how the villager has to walk.
+Perhaps using bresenhams line algo?
+
+1. Go straight creating (but not resolving) walkers. Maybe set a flag for which direction we went.
+
+Movement is N/S/E/W only? If we hit an obstacle, then the walker is fully expanded. 
+Do the straight line again.
+
+
+
+## Some weird start stand thingy.
+
+2022-11-16 15:45:10: ACTION[Server]: [working_villages] query_tool: object @ (449.37557983398,11.5,-141.00160217285) [working_villages:villager_female]
+
+can_stand_at: not stand (449,13,-141) pos=(449,13,-141) below=(449,12,-141) name=doors:gate_aspen_wood_open groups=fence=1 choppy=3 not_in_creative_inventory=1 oddly_breakable_by_hand=2 flammable=3
