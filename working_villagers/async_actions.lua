@@ -57,7 +57,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	-- This does a 2D dot product of the vector pos->wp1 and wp1->wp2.
 	-- If over 60 deg, then use exact positioning.
 	local function need_exact_pos()
-		return true
+		return false
 		--if #self.path < 2 then return false end
 		--local pos = self.object:get_pos()
 		--local wp1 = self.path[1]
@@ -85,7 +85,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 
 		-- If we have haven't reached the next waypoint for a while, then we
 		-- are likely stuck and need to recalculate the path.
-		if self:timer_exceeded("go_to:find_path",100) then
+		if self:timer_exceeded("go_to:find_path",200) then
 			-- We are stuck, so give up. This function will be called again.
 			break
 			-- -- someone may have placed a node on top of our destination, so recalculate ground level
@@ -108,10 +108,16 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 			-- exact_step = need_exact_pos()
 		end
 
-		if exact_step or self:timer_exceeded("go_to:change_dir",30) then
-			self:change_direction(self.cur_goal)
-		end
+		--if exact_step or self:timer_exceeded("go_to:change_dir",30) then
+		--	self:change_direction(self.cur_goal)
+		--else
+		--
+		--end
 
+		local function close_enough(v1, v2)
+			local d = vector.distance(v1, v2)
+			return d < 2
+		end
 		local function is_same_vec(v1, v2)
 			local r1 = vector.round(v1)
 			return r1.x == v2.x and r1.y == v2.y and r1.z == v2.z
@@ -135,6 +141,8 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 
 			--self:set_timer("go_to:find_path",0)
 			--self:change_direction(self.path[1])
+		else
+			self:change_direction(self.cur_goal)
 		end
 		-- if vilager is stopped by obstacles, the villager must jump or open the door.
 		self:handle_obstacles(true)

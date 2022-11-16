@@ -425,6 +425,7 @@ function working_villages.register_villager(product_name, def)
 
 	-- on_activate is a callback function that is called when the object is created or recreated.
 	local function on_activate(self, staticdata)
+		log.warning("on_activate: product=[%s] name=[%s]", self.product_name, name)
 		-- parse the staticdata, and compose a inventory.
 		if staticdata == "" then
 			self.product_name = name
@@ -459,7 +460,7 @@ function working_villages.register_villager(product_name, def)
 			self.memory = {}
 		end
 
-		log.warning("on_activate %s", self.inventory_name)
+		log.warning("on_activate: (below) inventory_name=%s", self.inventory_name)
 		self.sensefunc = sensors()
 
 		--hp
@@ -554,14 +555,19 @@ function working_villages.register_villager(product_name, def)
 		self.colinfo = colinfo
 		self.height = func.get_box_height(self)
 
+		local need_jump = false
+
 		-- physics comes first
 		local vel = self.object:get_velocity()
 		if colinfo then
 			self.isonground = colinfo.touching_ground
 			-- get the node that we are standing on
+			local logit = #colinfo.collisions > 1
 			for _, ci in ipairs(colinfo.collisions) do
 				if ci.type == "node" then
-					--log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
+					if logit then
+						log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
+					end
 					if ci.axis == 'y' then
 						local rpos = vector.round(ci.node_pos)
 						if self.stand_pos == nil or not vector.equals(self.stand_pos, rpos) then
@@ -570,6 +576,8 @@ function working_villages.register_villager(product_name, def)
 							self.stand_pos = rpos
 						end
 						break
+					else
+						need_jump = true
 					end
 				end
 			end
@@ -581,6 +589,11 @@ function working_villages.register_villager(product_name, def)
 			end
 		end
 		self:physics()
+
+		if need_jump then
+			vel.y = 4
+			self.object:set_velocity(vel)
+		end
 
 		if not self.pause then
 			-- pickup surrounding item.
@@ -653,7 +666,7 @@ function working_villages.register_villager(product_name, def)
 		state                       = "job",
 		state_info                  = "I am doing nothing particular.",
 		job_thread                  = false,
-		product_name                = "",
+		product_name                = product_name,
 		manufacturing_number        = -1,
 		owner_name                  = "",
 		time_counters               = {},

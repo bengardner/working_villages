@@ -71,7 +71,8 @@ function wayzone_path.start(start_pos, target_pos, args)
 end
 
 -- grab the next position
-function wayzone_path:next_goal(cur_pos)
+function wayzone_path:next_goal(mob_pos)
+	local cur_pos = self.last_goal or mob_pos
 	-- current position may have rounded into a solid node
 	if pathfinder.is_node_collidable(cur_pos) then
 		cur_pos = vector.new(cur_pos.x, cur_pos.y+1, cur_pos.z)
@@ -89,6 +90,7 @@ function wayzone_path:next_goal(cur_pos)
 		if self.path_idx <= #self.path then
 			local pp = self.path[self.path_idx]
 			--log.action("next_goal: path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
+			self.last_goal = pp
 			return pp
 		end
 	end
@@ -200,6 +202,7 @@ function wayzone_path:next_goal(cur_pos)
 		self.path_idx = 1
 		local pp = self.path[1]
 		--log.action("next_goal:x path idx %d %s", self.path_idx, minetest.pos_to_string(pp))
+		self.last_goal = pp
 		return pp
 	end
 	log.action("next_goal: empty path")

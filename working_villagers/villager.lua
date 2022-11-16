@@ -369,12 +369,10 @@ function villager:change_direction(destination)
 	local position = self.object:get_pos()
 	local direction = vector.subtract(destination, position)
 
-	--[[
-	log.action("change_dir %s to %s dir=%d",
-		minetest.pos_to_string(position),
-		minetest.pos_to_string(destination),
-		minetest.pos_to_string(direction))
-	]]
+	--log.action("change_direction %s to %s dir=%s dist=%s",
+	--	minetest.pos_to_string(position),
+	--	minetest.pos_to_string(destination),
+	--	minetest.pos_to_string(direction), tostring(vector.length(direction)))
 
 	local function do_climb(node, dy)
 		local rpos = vector.round(position)

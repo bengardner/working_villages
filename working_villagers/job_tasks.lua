@@ -200,7 +200,7 @@ function tasks.check_schedule(self, the_schedule)
 	local active = {}    -- enable these tasks
 	local names = {}
 
-	log.action("%s:check_schedule tod=%s", self.inventory_name, tostring(tod))
+	--log.action("%s:check_schedule tod=%s", self.inventory_name, tostring(tod))
 
 	for _, ent in ipairs(example_schedule) do
 		if ent.task ~= nil then
@@ -217,10 +217,10 @@ function tasks.check_schedule(self, the_schedule)
 	for task_name, _ in pairs(all_tasks) do
 		local ent = active[task_name]
 		if ent ~= nil then
-			log.action("%s: add %s", self.inventory_name, task_name)
+			--log.action("%s: add %s", self.inventory_name, task_name)
 			self:task_add(task_name, ent.priority)
 		else
-			log.action("%s: del %s", self.inventory_name, task_name)
+			--log.action("%s: del %s", self.inventory_name, task_name)
 			self:task_del(task_name, "schedule")
 		end
 	end

@@ -11,6 +11,14 @@ Possibly a bad gravity value or jump value.
 
 If a villager doesn't have a home or village then create shelter.
 
+ - chop down trees to get logs
+ - convert to planks and sticks
+ - make a wood axe
+ - make a wood pickaxe
+ - pick a spot for a hut, designate as village center
+ - dig out to make land level
+ - build hut
+ - make a bed
 
 ## Pickup stuff -- better check for finding place we can stand.
 
