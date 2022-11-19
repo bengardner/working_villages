@@ -163,6 +163,8 @@ end
 
 local function task_plant_seeds(self)
 	while true do
+		local did_one = false
+
 		-- Do we have any seeds?
 		local item_cnts = self:count_inventory_items(farming_plants.seeds)
 		if next(item_cnts) == nil then
@@ -215,11 +217,16 @@ local function task_plant_seeds(self)
 				working_villages.failed_pos_record(target)
 				self:set_displayed_action("confused as to why planting failed")
 				self:delay_seconds(5)
+			else
+				self:delay_seconds(2)
+				did_one = true
 			end
-			self:delay_seconds(2)
 		end
 
-		return true
+		if not did_one then
+			return true
+		end
+		--return true
 		---- Do we have a spot to plant?
 		--local target = self.task_data.plant_pos
 		--if target ~= nil then
@@ -260,7 +267,7 @@ working_villages.register_task("plant_seeds", { func = task_plant_seeds, priorit
 local function task_harvest_and_plant(self)
 	while true do
 		-- Do we have a spot to plant?
-		target = func.search_surrounding(self.object:get_pos(), find_harvest_node, searching_range)
+		local target = func.search_surrounding(self.object:get_pos(), find_harvest_node, searching_range)
 		if target == nil then
 			return true
 		end
@@ -282,6 +289,8 @@ local function task_harvest_and_plant(self)
 		local plant_data = farming_plants.get_plant(node.name);
 		self:dig(target,true)
 		if plant_data and plant_data.replant then
+			self:delay_seconds(1)
+			log.action("replanting %s", dump(plant_data.replant))
 			for index, value in ipairs(plant_data.replant) do
 				self:place(value, vector.add(target, vector.new(0,index-1,0)))
 			end
