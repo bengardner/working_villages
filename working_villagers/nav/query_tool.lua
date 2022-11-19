@@ -70,6 +70,41 @@ local function log_player_pos(player)
 	log.warning("player %s adjusted %s", minetest.pos_to_string(ppos), minetest.pos_to_string(spos))
 end
 
+local function get_node_drops(node_name)
+	local nodedef = minetest.registered_nodes[node_name]
+	if nodedef and nodedef.drops then
+	end
+end
+
+
+local function my_get_drops(node_name)
+	local out_tab = {}
+	local function get_items_from_table(val)
+		if type(val) == "string" then
+			local idx = string.find(val, " ")
+			if idx then
+				val = string.sub(val, 1, idx-1)
+			end
+			out_tab[val] = true
+		elseif type(val) == "table" then
+			for k, v in pairs(val) do
+				--get_strings_from_table(k, out_tab)
+				get_items_from_table(v)
+			end
+		end
+	end
+
+	local nodedef = minetest.registered_nodes[node_name]
+	if nodedef and nodedef.drop then
+		get_items_from_table(nodedef.drop)
+	end
+	local out_list = {}
+	for k, _ in pairs(out_tab) do
+		table.insert(out_list, k)
+	end
+	return out_list
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
 	log_player_pos(user)
 
@@ -77,10 +112,11 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		local pos = minetest.get_pointed_thing_position(pointed_thing)
 		local node = minetest.get_node(pos)
 		local nodedef = minetest.registered_nodes[node.name]
-		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s",
-			minetest.pos_to_string(pos), node.name, node.param1, node.param2)
+		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s",
+			minetest.pos_to_string(pos), node.name, node.param1, node.param2, minetest.get_node_light(pos))
 		if not is_use then
 			wayzone_utils.log_table("query_tool: node def", nodedef)
+			log.action("drop: %s", dump(func.get_possible_drops(node.name)))
 		end
 		if minetest.get_item_group(node.name, "tree") > 0 then
 			local ret, trunk_pos, leave_pos = tree_scan.check_tree(pos)

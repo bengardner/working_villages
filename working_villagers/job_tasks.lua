@@ -93,8 +93,8 @@ working_villages.register_task("idle_wander", { func = task_wander, priority = 1
 
 -- name = weight
 local idle_tasks = {
-	--{ name="idle_rest", weight=10 },
-	{ name="idle_wander", weight=10 },
+	{ name="idle_rest", weight=10 },
+	--{ name="idle_wander", weight=10 },
 	--{ name="idle_rest_at_home", weight=10 },
 	--{ name="idle_chat", weight=10 },
 }

@@ -22,6 +22,7 @@ local wayzone_chunk = working_villages.require("nav/wayzone_chunk")
 local wayzone_store = working_villages.require("nav/wayzone_store")
 local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local log = working_villages.require("log")
+local marker_store = working_villages.require("nav/marker_store")
 
 local pathfinder = working_villages.require("nav/pathfinder")
 local fail = working_villages.require("failures")
@@ -130,6 +131,8 @@ function wayzone_path:next_goal(mob_pos)
 
 		local time_start = minetest.get_us_time()
 
+		marker_store:clear()
+
 		self.wzpath = self.ss:find_path(si.pos, self.target_pos)
 		if self.wzpath == nil then
 			log.action("rebuild at %s fail", minetest.pos_to_string(si.pos))
@@ -142,7 +145,10 @@ function wayzone_path:next_goal(mob_pos)
 
 		log.action(" wzpath has %d in %d ms", #self.wzpath, time_diff/1000)
 
+		marker_store:add(si.pos, "start")
+		marker_store:add(self.target_pos, "target")
 		local wzkeys = {} -- key=wz.key, val=index in wzpath
+		local last_wz
 		for idx, wz in ipairs(self.wzpath) do
 			wzkeys[wz.key] = idx
 
@@ -151,6 +157,15 @@ function wayzone_path:next_goal(mob_pos)
 			log.action(" wzpath[%d] = %s  %s:%d", idx, wz.key, minetest.pos_to_string(cpos), cidx)
 
 			wayzone_utils.put_marker(wz:get_center_pos(), "center")
+			local mt
+			if last_wz then
+				mt = string.format("%s c=%d", idx,
+				                   pathfinder.get_estimated_cost(last_wz:get_center_pos(), wz:get_center_pos()))
+			else
+				mt = string.format("%s", idx)
+			end
+			marker_store:add(wz:get_center_pos(), mt)
+			last_wz = wz
 		end
 
 		self.wzkeys = wzkeys

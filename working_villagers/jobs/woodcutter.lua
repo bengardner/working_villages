@@ -165,14 +165,14 @@ local function task_plant_saplings(self)
 		-- end
 		self:set_displayed_action("planting a tree")
 		self:go_to(target,2)
-		self.object:set_velocity{x = 0, y = 0, z = 0}
+		self:stand_still()
 		local success, ret = self:place(is_sapling, target)
 		if not success then
 			working_villages.failed_pos_record(target)
 			self:set_displayed_action("confused as to why planting failed")
 			self:delay_seconds(5)
 		end
-		self:delay_steps(2)
+		self:delay_seconds(2)
 	end
 end
 working_villages.register_task("plant_saplings", { func = task_plant_saplings, priority = 35 })
@@ -370,7 +370,7 @@ local function task_chop_tree(self)
 	while true do
 		self:set_displayed_action("looking for a tree to cut")
 
-		local cnt = self:count_inventory_one("tree")
+		local cnt = self:count_inventory_group("tree")
 		log.action("%s: top of loop, cnt=%d", self.inventory_name, cnt)
 		if cnt > 50 then
 			log.action("%s: too many trees (%d), need to drop off in chest", self.inventory_name, cnt)
@@ -460,12 +460,13 @@ local function check_woodcutter(self, start_work, stop_work)
 
 	-- check work tasks every 5 seconds
 	if func.timer(self, 5) then
-		local grp_cnt = self:count_inventory({"tree", "sapling"})
+		local grp_cnt = self:count_inventory_groups({"tree", "sapling"})
 
 		-- gather saplings
 		if start_work and grp_cnt.sapling < 16 then
 			local items = self:get_nearby_objects_by_condition(is_sapling)
 			if #items > 0 then
+				self.task_data.gather_items = {}
 				for _, item in ipairs(items) do
 					table.insert(self.task_data.gather_items, item)
 				end

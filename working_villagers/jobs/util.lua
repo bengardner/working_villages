@@ -529,4 +529,37 @@ function func.pop_last(tab)
 	return nil
 end
 
+-- get a list of all possible drops from a node name
+function func.get_possible_drops(node_name)
+	local out_tab = {}
+	local function get_items_from_table(val)
+		if type(val) == "string" then
+			local idx = string.find(val, " ")
+			if idx then
+				val = string.sub(val, 1, idx-1)
+			end
+			out_tab[val] = true
+		elseif type(val) == "table" then
+			for k, v in pairs(val) do
+				--get_strings_from_table(k, out_tab)
+				get_items_from_table(v)
+			end
+		end
+	end
+
+	local nodedef = minetest.registered_nodes[node_name]
+	if nodedef then
+		if nodedef.drop then
+			get_items_from_table(nodedef.drop)
+		else
+			out_tab[node_name] = true
+		end
+	end
+	local out_list = {}
+	for k, _ in pairs(out_tab) do
+		table.insert(out_list, k)
+	end
+	return out_list
+end
+
 return func

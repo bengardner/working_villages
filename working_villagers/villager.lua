@@ -37,7 +37,7 @@ REVISIT: maybe a key/value pair where the key is the variable to set and the
    val is either a group name, a table of group names or a function to call to
    determine if it should be counted.
 ]]
-function villager:count_inventory(groups)
+function villager:count_inventory_groups(groups)
 	local inv = self:get_inventory()
 
 	local grp_cnt = {}
@@ -58,8 +58,29 @@ function villager:count_inventory(groups)
 end
 
 -- REVISIT: probably going to remove this
-function villager:count_inventory_one(group_name)
-	return self:count_inventory({group_name})[group_name]
+function villager:count_inventory_group(group_name)
+	return self:count_inventory_groups({group_name})[group_name]
+end
+
+--[[
+Count the matching inventory item names.
+If an item in @items isn't present, it won't be in the return value.
+
+@items is a map with key=item name, val=don't care
+]]
+function villager:count_inventory_items(items)
+	local inv = self:get_inventory()
+
+	local item_cnt = {}
+	for _, stack in pairs(inv:get_lists()) do
+		for _, istack in ipairs(stack) do
+			local node_name = istack:get_name()
+			if items[node_name] ~= nil then
+				item_cnt[node_name] = (item_cnt[node_name] or 0) + istack:get_count()
+			end
+		end
+	end
+	return item_cnt
 end
 
 -- villager.get_job_name returns a name of a villager's current job.

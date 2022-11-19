@@ -19,16 +19,25 @@ local function do_waypoint_flood(user, pos, all_zones)
 	local ss = wayzone_store.get()
 
 	local ii = ss:get_pos_info(pos, "tool")
+	local upos = user:get_pos()
 
 	if all_zones then
 		for idx, wz in ipairs(ii.wzc) do
-			log.action("* waypoint_tool show "..wz.key)
+			log.action("* waypoint_tool show %s", wz.key)
 			wayzone_utils.show_particles_wz(wz)
+			local close_pos = wz:get_closest(upos)
+			if close_pos ~= nil then
+				wayzone_utils.put_marker(close_pos, "target")
+			end
 		end
 	else
 		if ii.wz ~= nil and ii.wz:inside(pos) then
-			log.action("* waypoint_tool show "..ii.wz.key)
+			log.action("* waypoint_tool show %s", ii.wz.key)
 			wayzone_utils.show_particles_wz(ii.wz)
+			local close_pos = ii.wz:get_closest(upos)
+			if close_pos ~= nil then
+				wayzone_utils.put_marker(close_pos, "target")
+			end
 		end
 	end
 

@@ -706,11 +706,11 @@ local function neighbors_collect_diag(neighbors, args)
 	if args.debug > 3 then
 		for nidx, info in ipairs(n_info) do
 			log.action("  -- [%d] pos=%s gnd=%s walk=%s jump=%s water=%s", nidx,
-					   minetest.pos_to_string(info.npos),
-					   minetest.pos_to_string(info.gpos or vector.zero()),
-					   tostring(info.can_walk),
-					   tostring(info.can_jump),
-					   tostring(info.in_water))
+				minetest.pos_to_string(info.npos),
+				minetest.pos_to_string(info.gpos or vector.zero()),
+				tostring(info.can_walk),
+				tostring(info.can_jump),
+				tostring(info.in_water))
 		end
 	end
 
@@ -749,7 +749,7 @@ local function neighbors_collect_diag(neighbors, args)
 					cost = 10 + (8 * dy)
 				end
 			end
-			if false and cost ~= nil then
+			if cost ~= nil then
 				-- double the cost if neighboring cells are not clear
 				-- FIXME: this is an attempt to get the MOB to stay away
 				--        from corners and ledges.

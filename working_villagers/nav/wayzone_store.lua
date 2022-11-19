@@ -46,6 +46,7 @@ local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local fail = working_villages.require("failures")
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
+local marker_store = working_villages.require("nav/marker_store")
 
 local wayzone_store = {}
 
@@ -540,6 +541,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		--	tostring(fwd_rev.fwd),
 		--	minetest.pos_to_string(item.cur.pos),
 		--	item.cur.key, item.hCost, item.gCost)
+		-- marker_store:add(item.cur.pos, string.format("v=%d", item.hCost + item.gCost))
 
 		-- Add the starting wayzone (insert populates sl_key)
 		fwd_rev.posSet:insert(item)
@@ -548,22 +550,24 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- Add the starting wayzone to each walker
 	add_open(fwd, {
 		--parent_key=nil, -- first entry doesn't have a parent
-		cur={ pos=si.wzc.pos, hash=si.wzc.hash, index=si.wz.index, key=si.wz.key },
+		cur={ pos=si.wzc.pos, hash=si.wzc.hash, index=si.wz.index, key=si.wz.key, spos=si.pos },
 		hCost=hCost, gCost=0 })
 	add_open(rev, {
 		--parent_key=nil, -- last entry doesn't have a backwards parent
-		cur={ pos=di.wzc.pos, hash=di.wzc.hash, index=di.wz.index, key=di.wz.key },
+		cur={ pos=di.wzc.pos, hash=di.wzc.hash, index=di.wz.index, key=di.wz.key, spos=di.pos  },
 		hCost=hCost, gCost=0 })
 
 	local function log_fwd_rev(name, tab)
 		for k, v in pairs(tab.posSet.data) do
 			if v.sl_active == true then
-				log.action(" %s Open %s gCost=%d hCost=%d p=%s", name, k, v.gCost, v.hCost, tostring(v.parent_key))
+				log.action(" %s Open %s gCost=%d hCost=%d fCost=%d p=%s", name,
+					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key))
 			end
 		end
 		for k, v in pairs(tab.posSet.data) do
 			if v.sl_active ~= true then
-				log.action(" %s Clos %s gCost=%d hCost=%d p=%s", name, k, v.gCost, v.hCost, tostring(v.parent_key))
+				log.action(" %s Clos %s gCost=%d hCost=%d fCost=%d p=%s", name,
+					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key))
 			end
 		end
 	end
@@ -577,8 +581,17 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- reverse sequence
 	-- append ref to end
 	local function dual_rollup(ref_key)
-		--log.action("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key)
-		--log_all()
+		for _, item in pairs(fwd.posSet.data) do
+			local wz = self:wayzone_get_by_key(item.cur.key)
+			marker_store:add(wz:get_center_pos(), string.format("fc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+		end
+		for _, item in pairs(rev.posSet.data) do
+			local wz = self:wayzone_get_by_key(item.cur.key)
+			marker_store:add(wz:get_center_pos(), string.format("rc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+		end
+
+		log.action("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key)
+		log_all()
 		--log.action("  dual_rollup - start")
 		-- roll up the path and store in wzp.wzpath
 		local rev_wzpath = {}
@@ -607,6 +620,14 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		--	log.action("  [%d] %s -- %s %d", idx, wz.key,
 		--		minetest.pos_to_string(wz.cpos), wz.index)
 		--end
+
+		local spos = si.pos
+		for idx=2,#wzpath-1 do
+			local wz = wzpath[idx]
+			local cpos = wz:get_closest(spos)
+			marker_store:add(cpos, string.format("closest=%d", idx))
+			spos = cpos
+		end
 		return wzpath
 	end
 
@@ -638,7 +659,8 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			local xx_wzc = self:chunk_get_by_hash(xx.cur.hash)
 			local xx_wz = xx_wzc[xx.cur.index]
 
-			--log.action("Processing %s fwd=%s fCost=%d", xx_wz.key, tostring(is_fwd), xx.fCost)
+			log.action("Processing %s fwd=%s gCost=%d hCost=%d fCost=%d sp=%s", xx_wz.key, tostring(is_fwd),
+			           xx.gCost, xx.hCost, xx.gCost + xx.hCost, minetest.pos_to_string(xx.cur.spos))
 
 			-- iterate over the adjacent chunks, refresh links with this chunk
 			local adj_hash = {}
@@ -673,16 +695,19 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 					-- TODO: this is a link to a non-adjacent chunk. We need to check the gen of each
 					--       chunk in the chain and make sure they are current.
 				else
+					local link_wz = link_wzc[link.index]
 					--log.action("   + hit")
 					-- don't store a worse walker if we already visited this wayzone
 					local old_item = fr.posSet:get(link.key)
 					if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
-						--log.action("   + adding link %s", link.key)
+						log.action("   + adding link %s -> %s gc=%d", xx_wz.key, link.key, link.gCost)
+						local new_spos = link_wz:get_closest(xx.cur.spos)
+						local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
 						add_open(fr, {
 							parent_key=xx.cur.key,
-							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key },
+							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key, spos=new_spos },
 							hCost=wz_estimated_cost(di.wz, link_wzc[link.index]),
-							gCost=xx.gCost + (link.gCost or wayzone.chunk_size)
+							gCost=xx.gCost + new_gCost
 						})
 					end
 				end

@@ -9,9 +9,15 @@ The result of a path search is either the series of states (the transition betwe
 For a 2D block-based map, we reduce the problem to a series of cells/nodes that we can occupy or not.
 The "state" is the location of the MOB in the map.
 
-We can move north, south, east, or west. If we can't be in the cell in a direction, then that is not a valid transition.
+We can move north, south, east, or west. If we can't move to the cell in a direction, then that is not a valid transition.
 
 These valid movements are called "neighbors". There is a cost associated with moving to each neighbor.
+
+The costs involved are denoted as follows:
+
+  * gCost is the total cost to reach the current state from the START state
+  * hCost is the estimated cost to reach the TARGET state from the current state
+  * fCost is the total estimated cost of the path (gCost + hCost)
 
 The simplest algorithm is as follows:
 
@@ -19,7 +25,7 @@ The simplest algorithm is as follows:
     * The collection is accessible via a get() method to get the data for a position.
     * The collection is accessible via a get_first() method that removes the first "active" position.
     * The data item contains a few items
-        * the cost to reach this position
+        * the cost to reach this position (gCost)
         * the parent position (where we came from)
         * whether the position is active or not
   * The loop goes as follows:
@@ -27,7 +33,7 @@ The simplest algorithm is as follows:
      2. If the position is the target position, then roll-up the path and return it
      3. Find all the valid neighbors and the associated cost, creating new position data for each.
      4. For each neighbor, do the following:
-        * If the position is NOT already in the store or the new data has a lower cost, then add the item as an active position
+        * If the position is NOT already in the store or the new data has a lower cost, then add/replace the item as an active position
    * The rollup loop goes as follows:
        * The current node is the one that hit the end position
            * Loop while current.parent ~= nil
@@ -38,9 +44,6 @@ The simplest algorithm is as follows:
 
 Pseudo code:
 ```lau
-function rollup_path(walkers, cur)
-end
-
 function find_path(start_pos, end_pos)
     local walkers = position_store.new()
     walkers:add({pos=start_pos, cost=0}) -- add puts it in the hash and the sorted list
@@ -71,8 +74,114 @@ function find_path(start_pos, end_pos)
     -- target_pos not reachable
     return nil
 end
-
 ```
+
+## Path Finding - Cost Estimate
+
+Estimating the cost of the path is important in finding the optimal path.
+
+The estimate should be the lowest possible cost. Put another way, it should be less than or equal to any possible path.
+Using hCost=0 is valid, but won't find the best path.
+
+For example, if the lowest movement cost on the map is 10, then the estimate should use 10 per move.
+
+On the grid example, the movements are uniform and predicable.
+
+The grid estimated cost is typically calculated as follows (no diagonals, x=east/west, z=north/south, min_cost=10):
+```
+    return (abs(cur.x - tgt.x) + abs(cur.z - tgt.z)) * 10
+```
+
+The estimate with diagonals is typically calculated as follows:
+```
+    local dx = math.abs(cur.x - tgt.x)
+    local dz = math.abs(cur.z - tgt.z)
+
+    if dx > dz then
+        return 14 * dz + 10 * (dx - dz)
+    else
+        return 14 * dx + 10 * (dz - dx)
+    end
+```
+The `14` is sqrt(2), which is the distance traveled on the diagonal.
+
+However, depending on the platform and language, it may be more efficient to calculate hCost as a vector distance:
+```
+    return vector.distance(cur, tgt) * 10
+```
+
+If the map has complex features, like a transportation portal, this estimate won't work right.
+
+## Path Finding - A*
+
+The A* algorithm adds an estimated cost (hCost) to reach the target to each node.
+
+The pop_next() function grabs the walker with the lowest fCost (hCost + gCost). If the fCosts are the same, then the lowest gCost breaks the tie.
+
+This greatly reduces the number of nodes visited in the simple cases, but will often fail to find the optimal path if movement costs are not uniform.
+
+For example, the path may run parallel to a road with cost 50 on terrain with cost 100. Shifting over two squares to the road would result in a much lower total cost, but the A* algo won't find it.
+
+## Path Finding Limits
+
+If there is no solution and the problem space is unbounded, the path finding algorithm will consume a lot of memory and CPU time.
+That isn't good for a game that is expected to run 10 cycles per second.
+
+Safeguards must be added to limit the search space.
+
+### Distance Limit
+Limit the distance between START and TARGET. Refuse to calculate the path if too far.
+
+Instead, blindly walk towards TARGET until START is within range.
+
+### Limit Search Space
+Put a box around the START and TARGET nodes. Don't allow walking outside those bounds.
+
+This has the problem that there may be a valid path, but it travels outside of the bounds.
+
+### Limit the number of active walkers
+Worst case, the number of active walkers is approximately the diameter of a circle.
+
+Limit the number of active walkers to, say, 100.
+
+## Path Finding Flood Fill - Uniform Cost
+
+If the movement cost is uniform, we can evaluate all walkers in the list at each step.
+
+The accumulated cost for all walkers will be the same.
+The first one to hit the target will be the best path.
+
+This ends up visiting at most PI * R ^ 2 nodes, where R is the number of steps.
+
+It is extremely easy to implement, as we don't need to track costs.
+
+## Path Finding Flood Fill - Variable Cost
+
+If the movement cost is not uniform, we can modify the A* algorithm in the following ways:
+
+  - Don't stop when the first path hits the target, but track the lowest cost solution (gCost)
+  - Discard active walkers where the total est cost (fCost) is greater than or equal to the lowest cost solution
+
+This is effectively the flood-fill algorithm, but with built-in bounds. It would properly solve the parallel road problem.
+
+It will visit more nodes than the A* algorithm, but not by too much.
+
+## Path Finding with Portals
+
+A portal is a node that has an unusual movement to another node that is not a neighbor.
+
+For example, the node (0,0,0) could have a portal that tranports the MOB to (100,0,0) in one move.
+
+If the START is something like (0,0,5) and TARGET is something like (100,0,5), then we would want to take the portal.
+
+The A* algo may not find the portal. It might move 100 times, directly from START to TARGET.
+
+Both Flood Fill algos should find it. The simple flood fill would do better than the Variable Cost flood fill.
+
+The Variable Cost would trace all the way to the target and then thicken the path until it hits the portal. Then it would be done. (~1000 visited nodes)
+
+The simple Flood Fill would hit the portal much earlier. (~11 steps or ~380 visited nodes)
+
 
 # Minetest Adaption
 
@@ -98,6 +207,12 @@ For all examples in this document, we assume the following settings:
 
 A node is "clear" if it will not collide with the MOB. Minetest uses the term "walkable" to indicate that the node is collidable.
 
+However, there are certain nodes that are "walkable" that should be considered clear.
+
+  * Doors
+  * Gates
+
+
 A node is "standable" (meaning that a MOB can stand on it) if:
 
   * the node is collidable
@@ -105,11 +220,13 @@ A node is "standable" (meaning that a MOB can stand on it) if:
   * the node is NOT in group leaves (if the MOB cannot walk on leaves -- weight check?)
   * the node is climbable AND the MOB can climb
 
+
 A node is "swimmable" (meaing that a MOB can swim through it) if:
 
   * the MOB can swim AND
   * the node is liquid (water) AND
   * the node above OR below is liquid
+
 
 ## Stand Position
 
@@ -135,11 +252,15 @@ Once the ground level is found, we scan upwards to see if we can stand at the po
 
 Waypoints are used to pre-calculate path finding and reduce the search area. It enables finding large and complex paths with little CPU time.
 
-For example, in a town, waypoints would be placed on door node and along roads, especially at intersections. They would also be placed in each rooms and hallway in a building.
+When two waypoints are linked, it tells the planner that a path between the two points exists. We don't need to know the exact path at the time, only that they can reach each other.
+
+Waypoints are (typically) linked such that only nearby waypoints are linked together and links do not cross.
+
+For example, in a town, waypoints would be placed on door nodes and along roads, especially at intersections. They would also be placed in each rooms and hallway in a building.
 
 When there are no good places for a waypoint (outdoors), they would be evenly spaced.
 
-Waypoints are connected to each other via links that contain a cost for going from one waypoint to another. The cost is precalculated by doing an A* search.
+Waypoints are connected to each other via links that contain a cost for going from one waypoint to another. The cost is precalculated by doing an A* search or is estimated.
 
 ## Waypoint Usage
 
@@ -152,15 +273,22 @@ Once that is determined, we have a list of waypoints that we need to visit. We c
 
 The itermediate paths go directly to the next waypoint. This causes the path to be a bit strange and suboptimal.
 
-## Waypoint Improvement
+## Waypoint Improvement (Areas or Zones)
 
-Instead of a single position for a waypoint, we need an area or zone associated with the waypoint. Perhaps a radius or some simple geometry (box).  The pathfinder can end early when it hits any point in the zone.
+Instead of a single position for a waypoint, we need an area or zone associated with the waypoint. Perhaps a radius or some simple geometry (box).  The pathfinder can terminate early when it hits any point in the zone.
 This allows for a more natural path -- the MOB will head towards the waypoint and then start heading towards the next waypoint when it gets close.
 
-We could eliminate the start and target search by making every standable node covered by a waypoint. All possible standing positions would be covered by a waypoint zone.
+We could eliminate the start and target search by making every standable node covered by one (or more) waypoints.
+
 We could jump straight to the waypoint network evaluation. Each zone feeds into another zone.
 
-This causes another problem related to cost estimation. Going from one zone to another may cost as little as 1 move. The upper bounds can be quite large.
+This causes another problem related to cost estimation of traveling between wayzones.
+
+Going from one zone to another may cost as little as 1 move. The upper bounds can be quite large, assuming complex obstacles.
+
+We might be able to get a better cost esimate using a traversal cost. For example, if the wayzone links are A -> B -> C, we know that the cost of both A->B and B->C may be as little as 1 move. However, we can estimate the average cost to go from A -> C. That complicates things, as we won't know the cost of A->B until we choose B->C. But we also might choose B->D.
+
+Another option is to find the closest point in the linked wayzone and estimate the cost to that point. That would give an "accurate" gCost estimate. However, it would be difficult to determine which 
 
 
 # Wayzones (Waypoint Zones)

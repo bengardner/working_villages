@@ -646,6 +646,53 @@ local function closest_to_box(pos, minp, maxp)
 		bound_val(pos.z, minp.z, maxp.z))
 end
 
+-- get the closest position in the wayzone to pos
+function wayzone:get_closest(ref_pos)
+	local rpos = vector.round(ref_pos)
+
+	-- try the easy check first -- pos is in the wayzone
+	if self:inside(rpos) then
+		return rpos
+	end
+
+	-- be stupid until I have time to do this right
+	local best = {}
+	for pos in self:iter_visited() do
+		local dist = vector.distance(pos, ref_pos)
+		if best.dist == nil or dist < best.dist then
+			best.dist = dist
+			best.pos = pos
+		end
+	end
+	return best.pos
+end
+
+-- Get the first and last itersection with wayzone in the X-Z plane
+-- ignores Y pos
+--function wayzone:get_closest_hit_xz(start_pos, target_pos)
+--	local maxp = vector.new(self.cpos.x + chunk_size, self.cpos.y + chunk_size, self.cpos.z + chunk_size)
+--	local dv = vector.subtract(start_pos, target_pos)
+--	local d_ts = vector.subtract(target_pos, start_pos)
+--	local max_len = vector.distance(start_pos, target_pos)
+--
+--	-- be stupid until I have time to do this right
+--	local close = {}
+--	local best_end = {}
+--	local d_max = {}
+--	local d_min = {}
+--	for pos in self:iter_visited() do
+--		local p_d = math.abs((d_ts.x * (start_pos.z - pos.z)) - ((start_pos.x - pos.x) * d_ts.z))
+--		local s_dist = vector.distance(pos, start_pos)
+--		local t_dist = vector.distance(pos, target_pos)
+--		local dt = (s_dist + t_dist) - max_len
+--		if d_min.dist == nil or (dt <= 1 and dist < s_best.dist then
+--			best.dist = dist
+--			best.pos = pos
+--		end
+--	end
+--	return best.pos
+--end
+
 --[[
 Create the "end_pos" for this wayzone.
 @allowed_chash is optional.
