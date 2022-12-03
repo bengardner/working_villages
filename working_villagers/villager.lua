@@ -367,9 +367,12 @@ function villager:move_main_to_wield(pred)
 	return false
 end
 
--- villager.is_named reports the villager is still named.
-function villager:is_named()
-	return self.nametag ~= ""
+-- Move the wield itemstack to main, clearing the wielded item.
+function villager:move_wield_to_main()
+	local inv = self:get_inventory()
+	local wield_stack = inv:get_stack("wield_item", 1)
+	inv:add_item("main", wield_stack)
+	inv:set_stack("wield_item", 1, ItemStack())
 end
 
 -- villager.has_item_in_main reports whether the villager has item.
@@ -383,6 +386,52 @@ function villager:has_item_in_main(pred)
 			return true
 		end
 	end
+end
+
+--[[
+Equip the best tool for digging the given node.
+If there is nothing suitable, the 'hand' is equipped.
+
+There are a few damage groups: crumbly, cracky, choppy, fleshy, and snappy.
+And there is "oddly_breakable_by_hand".
+
+But we are going with brute force here.
+]]
+function villager:wield_best_for_dig(node_name)
+	local nodedef = minetest.registered_nodes[node_name]
+	local inv = self:get_inventory()
+
+	-- TODO: remember the previous results and use the same tool
+
+	local best = {}
+	for _, stack in pairs(inv:get_lists()) do
+		-- We only need to scan wield_item and main (not job), but whatever
+		for _, istack in ipairs(stack) do
+			local name = istack:get_name()
+			local tool = minetest.registered_tools[name]
+			if tool and tool.tool_capabilities then
+				log.action("check %s", dump(tool))
+				local ii = minetest.get_dig_params(nodedef.groups, tool.tool_capabilities)
+				if ii.diggable and best.time == nil or best.time > ii.time then
+					best.tool = name
+					best.time = ii.time
+					best.istack = istack
+				end
+			end
+		end
+	end
+	if best.istack == nil then
+		log.action("%s: wielding my fist", self.inventory_name)
+		self:move_wield_to_main()
+	else
+		log.action("%s: wielding %s", self.inventory_name, best.tool)
+		self:move_main_to_wield(function (name) return name == best.tool end)
+	end
+end
+
+-- villager.is_named reports the villager is still named.
+function villager:is_named()
+	return self.nametag ~= ""
 end
 
 -- villager.change_direction change direction to destination and velocity vector.

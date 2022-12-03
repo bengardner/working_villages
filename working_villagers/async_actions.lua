@@ -301,6 +301,10 @@ local drop_range = {x = 2, y = 10, z = 2}
 
 function working_villages.villager:dig(pos,collect_drops,do_dist_check)
 	if func.is_protected(self, pos) then return false, fail.protected end
+
+	-- wield the right tool early
+	self:wield_best_for_dig(minetest.get_node(pos).name)
+
 	self.object:set_velocity{x = 0, y = 0, z = 0}
 	local dist = vector.subtract(pos, self.object:get_pos())
 	if do_dist_check ~= false and vector.length(dist) > 5 then

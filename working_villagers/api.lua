@@ -159,16 +159,9 @@ do
 	--end
 
 	local function on_step(self)
-		-- We get detached when the parent dies or is removed
-		local parent = self.object:get_attach()
-		if parent == nil then
-			self.object:remove()
-			return
-		end
+		-- get the villager. the villager on_deactivate() removes this object
+		local ent = self.object:get_attach():get_luaentity()
 		local wield_item = self.object:get_properties().wield_item
-
-		-- get the villager
-		local ent = parent:get_luaentity()
 		local wield_name = ent:get_wield_item_stack():get_name()
 		local is_visible = true
 		if wield_name == "" then
@@ -184,12 +177,14 @@ do
 	-- this is created and attached when the villager is activated
 	minetest.register_entity("working_villages:wield_entity", {
 		visual        = "wielditem",
-		wield_item    = "default:axe_steel",
-		visual_size   = {x = 0.025, y = 0.025},
+		wield_item    = "air",
+		--visual_size   = {x = 0.025, y = 0.025},
+		visual_size   = {x=0.25, y=0.25},
 		collisionbox  = {0, 0, 0, 0, 0, 0},
 		physical      = false,
 		pointable     = false,
 		static_save   = false,
+		is_visible    = false,
 		on_step       = on_step,
 	})
 end
@@ -452,16 +447,13 @@ function working_villages.register_villager(product_name, def)
 
 	-- on_activate is a callback function that is called when the object is created or recreated.
 	local function on_activate(self, staticdata)
-		log.warning("on_activate: product=[%s] name=[%s]", self.product_name, name)
 		-- parse the staticdata, and compose a inventory.
 		if staticdata == "" then
+			-- this is a new villager
 			self.product_name = name
 			self.manufacturing_number = working_villages.manufacturing_data[name]
 			working_villages.manufacturing_data[name] = working_villages.manufacturing_data[name] + 1
 			create_inventory(self)
-
-			-- attach dummy item to new villager.
-			minetest.add_entity(self.object:get_pos(), "working_villages:dummy_item")
 		else
 			-- if static data is not empty string, this object has beed already created.
 			local data = minetest.deserialize(staticdata)
@@ -487,13 +479,13 @@ function working_villages.register_villager(product_name, def)
 			self.memory = {}
 		end
 
+		-- create the wield holder thingy (right handed)
 		local hand = minetest.add_entity(self.object:get_pos(), "working_villages:wield_entity")
 		hand:set_attach(self.object, "Arm_Right", {x=0, y=5.5, z=3}, {x=-90, y=225, z=90}, true)
-		hand:set_properties({wield_item="default:axe_mese", visual_size={x=0.25,y=0.25}})
+		--hand:set_properties({visual_size={x=0.25,y=0.25}})
+		self.hand = hand
 
 		working_villages.active_villagers[self.inventory_name] = self
-
-		log.warning("on_activate: (below) inventory_name=%s", self.inventory_name)
 		self.sensefunc = sensors()
 
 		--hp
@@ -528,6 +520,11 @@ function working_villages.register_villager(product_name, def)
 		self.object:set_velocity{x = 0, y = 0, z = 0}
 		self.object:set_acceleration{x = 0, y = func.gravity, z = 0}
 
+		-- have to set an animation for the wield_item to be linked right
+		self:stand_still()
+
+		log.warning("on_activate: [%s]", self.inventory_name)
+
 		--legacy
 		if type(self.pause) == "string" then
 			self.pause = (self.pause == "resting")
@@ -555,6 +552,9 @@ function working_villages.register_villager(product_name, def)
 
 	local function on_deactivate(self, removal)
 		log.warning("deactivate %s removal=%s", self.inventory_name, tostring(removal))
+		if self.hand then
+			self.hand:remove()
+		end
 		working_villages.active_villagers[self.inventory_name] = nil
 	end
 
