@@ -335,6 +335,34 @@ When the wayzone data for a chunk is update:
 
 If a node near the border is altered, then the adjacent chunk also must be marked dirty.
 
+### Dirty Chunks
+
+If a node is added/removed, we need to "dirty" all affected chunks.
+
+The chunk in which the node resides is obviously dirtied when a significant node is changed.
+
+#### Side
+If the changed node is on the outer edge of the X-Z plane, then the adjacent chunk must be dirtied.
+
+The change may create or eliminate an exit node.
+
+At CS=16, this is at X=0, Z=0, X=15, Z=15.
+
+#### Below
+
+The highest standable spot in the chunk below is at "y=0". Standing at y=0 depends on y=-1 if h=2. Jumping depends on y=-2 if j=1.
+
+If the changed node is within height+jump-1 nodes of the bottom, then the chunk below must be dirtied. The -1 is because the stand pos must be in the chunk below.
+
+NOTE: Some analysis could be done to eliminate the dirty in some cases.
+
+At CS=16, H=2, J=1, this is at Y=14,15.
+
+#### Above
+
+If the changed node is whithin fall nodes + 1 from the top, then the chunk above must be dirtied.
+
+At CS=16, F=2, this is Y=0,1,2.
 
 ## Navigation
 
@@ -558,10 +586,9 @@ Solution:
  1. Evaluate all walkers instead of only picking the "best" walker.
 
     That greatly increases the number of nodes that must be visited, but it will always produce the best path.
-    With CS=8, this isn't too bad (up to 8 * 8=64 nodes), but because of small size, the wayzone search isn't likely to find the road.  
+    With CS=8, this isn't too bad (up to 8 * 8=64 nodes), but because of small size, the wayzone search isn't likely to find the road.
     Unless, of source, wayzone traveral costs were more accurate.
     With CS=16, we would be more likely to find the road, but would need to visit 4x as many nodes (up to 16 * 16=256 nodes).
-    
 
  2. Evaluate 10% or 50% of the walkers (in sorted order) on each pass
 
@@ -622,7 +649,7 @@ sub-tags = 0 to 8 in length
 8x2x4
 
 0,0,0 => 0
-7,1,3 => 
+7,1,3 =>
 
 
 
@@ -634,12 +661,20 @@ sub-tags = 0 to 8 in length
 -2 has a penalty of 10
 unwalkable has a penalty of 20
 
-NOTE: This just doesn't seem to work right.
 
 ## Disallow changing Y on a diagonal
 
 Diagonals only allowed on flat.
 Not sure I got this right. Seems to still use diagonals.
+
+
+## Split Wayzones into convex regions
+
+Tried the simple splitting into rectangles. Didn't work too well with Y changes.
+If this is worth persuing...
+ - allow dy=+/-1 changes when expanding
+ - find largest rectangle, mark as used, repeat
+
 
 ## Enhance the villager scepter
 
@@ -648,6 +683,7 @@ left click to select/pause/resume villager
 left click on a node to tell selected villager to walk there. (to test pathfinding)
 
 Working.
+
 
 ## Drop 'exit nodes'.
 
@@ -695,7 +731,7 @@ Do the straight line again.
 
 while true do
     walker = store:get_head()
-    best_neighbor = 
+    best_neighbor =
 
 
 
@@ -707,3 +743,67 @@ The ref_pos for the first wayzone is the start_pos.
 The ref_pos for the last wayzone is the target_pos.
 The ref_pos for the second wayzone is the closest accessible node in the wayzone, which would be the closest exit pos to the current ref_pos.
 That doesn't seem too cheap to calculate.
+
+
+
+
+
+# Another revisit of wayzone-to-wayzone navigation
+
+If at any time the number of active wayzones in a direction is 1, then that "enter" position is the target for the cost estimations.
+
+## Choke point waypoints
+
+ - add a 'choke point' at door wayzones
+ - add a 'choke point' when there are fewer than 3 exit nodes between wayzones
+    -- need to change the 'test link' function to count up to a max
+
+Works well for doors.  Need other 'waypoints'.
+
+### Additional Waypoints on Outside corners
+
+When doing the flood fill look for spaces where the corner is blocked but the two adjacent cells are not.
+
+This pass can be done after the wayzone is created based on the visited nodes, although that may lose some on the border.
+
+Patterns to catch (X=blocked, _=visited, o=refnode, ?=don't care)
+```
+?X-
+?X-
+--o
+```
+This can be rotated 4 ways.
+
+If a visited node is completely surrounded by edge waypoints and impassible nodes, then the nodes should be turned into another wayzone.
+This will catch openings that are less than 3 wide.
+
+```
+   oo
+XXX--XXX
+   oo
+
+   oo oo
+XXX--X--XX
+   oo oo
+
+```
+But I don't see value in that.
+
+Need to add markers to a real map around corners to see how it looks and how it can be used.
+
+We don't want to go towards a waypoint unless it is the only way in.
+
+Probably should just leave it at doors. The single path thing works well even without doors.
+
+
+
+But if I did try to use outter edges... I could do this AFTER determining the wayzone path.
+
+1. Walk a straight line using bresenham's line algo (or similar) via the wayzone info.
+   If the point leaves a wayzone, then find the next wayzone and add the previous to the list.
+
+2. If we hit an impassible node, then find the closest outter edge and add that in the middle of the current span.
+   Re-walk the current span (old start to new outter edge)
+
+
+

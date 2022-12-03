@@ -6,9 +6,13 @@ local S = minetest.get_translator("testpathfinder")
 local log = working_villages.require("log")
 
 local pathfinder = working_villages.require("nav/pathfinder")
---local waypoints = working_villages.require("nav/waypoint_zones")
 local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
 local wayzone_store = working_villages.require("nav/wayzone_store")
+local marker_store = working_villages.require("nav/marker_store")
+local markers_node = marker_store.new("waypoints", {texture="testpathfinder_waypoint.png", yoffs=0.3, visual_size = {x = 0.3, y = 0.3, z = 0.3}})
+
+local line_store = working_villages.require("nav/line_store")
+local path_lines = line_store.new("pathfinder")
 
 local use_coroutine = false
 
@@ -26,6 +30,11 @@ local function co_path(pos1, pos2)
 end
 
 local function do_path_find_with_timer(player, pos1, pos2)
+	marker_store.clear_all()
+	path_lines:clear()
+
+	path_lines:draw_line(pos1, pos2)
+
 	minetest.log("action",
 		string.format("Path from %s to %s",
 			minetest.pos_to_string(pos1),
@@ -65,8 +74,30 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	end
 	--minetest.log("action", "done..." .. tostring(#path))
 
+	--local c1 = { 0, 255, 100 }
+	--local c2 = { 255, 0, 100 }
+	local prev = path[1]
 	for idx, pos in ipairs(path) do
+		local t = "testpathfinder_waypoint.png"
+		if idx == #path then
+			t = "testpathfinder_waypoint_end.png"
+		elseif idx == 1 then
+			t = "testpathfinder_waypoint_start.png"
+		elseif pos.y ~= prev.y then
+			if pos.x == prev.x and pos.z == prev.z then
+				if pos.y > prev.y then
+					t = "testpathfinder_waypoint_up.png"
+				else
+					t = "testpathfinder_waypoint_down.png"
+				end
+			elseif pos.y > prev.y then
+				t = "testpathfinder_waypoint_jump.png"
+			end
+		end
+		local c = math.floor(((#path - idx) / #path) * 255)
+		markers_node:add(pos, string.format("#%s", idx), {0xff-c, c, 0}, t)
 		log.action(" [%d] %s", idx, minetest.pos_to_string(pos))
+		prev = pos
 	end
 
 	local time_end = minetest.get_us_time()
@@ -75,7 +106,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
 	minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
 
-	pathfinder.show_particles(path)
+	--pathfinder.show_particles(path)
 end
 
 local function find_path_for_player(player, itemstack, pos1)

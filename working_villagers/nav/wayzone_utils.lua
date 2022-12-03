@@ -179,7 +179,17 @@ function wayzone_utils.log_table(name, tab)
 	for k, v in pairs(tab) do
 		if type(v) == 'table' then
 			for k2, v2 in pairs(v) do
-				log.action("  | %s.%s = %s", k, k2, escape_unprintable(tostring(v2)))
+				if type(v2) == 'table' then
+					for k3, v3 in pairs(v2) do
+						local pk3 = k3
+						if type(pk3) == "number" and pk3 > 50000 then
+							pk3 = string.format("%012x", pk3)
+						end
+						log.action("  | %s.%s.%s = %s", k, k2, pk3, escape_unprintable(tostring(v3)))
+					end
+				else
+					log.action("  | %s.%s = %s", k, k2, escape_unprintable(tostring(v2)))
+				end
 			end
 		else
 			log.action("  | %s = %s", k, escape_unprintable(tostring(v)))

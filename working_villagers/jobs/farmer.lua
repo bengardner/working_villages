@@ -44,6 +44,14 @@ local farming_plants = {
 		["farming:tomato_8"]={replant={"farming:tomato"}},
 		["farming:vanilla_8"]={replant={"farming:vanilla"}},
 		["farming:wheat_8"]={replant={"farming:seed_wheat"}},
+		-- harvest, but no replant
+		["default:blueberry_bush_leaves_with_berries"]={},
+		-- haven't seen these, yet, but they should work like the default bush
+		["bushes:blackberry_bush"]={},
+		["bushes:blueberry_bush"]={},
+		["bushes:gooseberry_bush"]={},
+		["bushes:raspberry_bush"]={},
+		["bushes:strawberry_bush"]={},
 	},
 }
 
@@ -81,13 +89,15 @@ local farming_demands = {
 }
 
 function farming_plants.get_plant(item_name)
-	-- check more priority definitions
-	for key, value in pairs(farming_plants.names) do
-		if item_name==key then
-			return value
-		end
-	end
-	return nil
+	return farming_plants.names[item_name]
+
+	---- check more priority definitions
+	--for key, value in pairs(farming_plants.names) do
+	--	if item_name==key then
+	--		return value
+	--	end
+	--end
+	--return nil
 end
 
 -- Is this something we can plant?
@@ -96,7 +106,7 @@ function farming_plants.is_seed(item_name)
 end
 
 function farming_plants.is_plant(item_name)
-	local data = farming_plants.get_plant(item_name);
+	local data = farming_plants.get_plant(item_name)
 	if (not data) then
 		return false;
 	end
@@ -110,11 +120,12 @@ end
 
 local function find_harvest_node(pos)
 	local node = minetest.get_node(pos);
-	local data = farming_plants.get_plant(node.name);
-	if (not data) then
-		return false;
-	end
-	return true;
+	return farming_plants.get_plant(node.name) ~= nil
+	--local data = farming_plants.get_plant(node.name);
+	--if (not data) then
+	--	return false;
+	--end
+	--return true;
 end
 
 -- Can plant in air above soil with light in a good range
@@ -161,6 +172,18 @@ end
 
 -------------------------------------------------------------------------------
 
+--[[ Remember the position as somewhere that we harvested or planted.
+The position is rounded to a 8x8x8 node box.
+The farmer will revisit the oldest previous locations during working hours and
+refresh the position if something was planted or harvested.
+These should time out after a few days in game time.
+]]
+local function remember_farming_pos(self, pos)
+	self:remember_area("farming_pos", pos)
+end
+
+-------------------------------------------------------------------------------
+
 local function task_plant_seeds(self)
 	while true do
 		local did_one = false
@@ -170,7 +193,7 @@ local function task_plant_seeds(self)
 		if next(item_cnts) == nil then
 			return true
 		end
-		log.action("can plant: %s", dump(item_cnts))
+		--log.action("can plant: %s", dump(item_cnts))
 
 		local node_names = {}
 		for n, c in pairs(item_cnts) do
@@ -180,7 +203,7 @@ local function task_plant_seeds(self)
 			end
 			table.insert(node_names[ss], n)
 		end
-		log.action("We need to find %s", dump(node_names))
+		--log.action("We need to find %s", dump(node_names))
 		-- convert the soil list for find_nodes_in_area_under_air()
 		local nnam = {}
 		for n, _ in pairs(node_names) do
@@ -199,7 +222,7 @@ local function task_plant_seeds(self)
 			end
 			table.insert(grp_pos[nn], npos)
 		end
-		log.action("find_nodes_in_area_under_air: %s", dump(grp_pos))
+		--log.action("find_nodes_in_area_under_air: %s", dump(grp_pos))
 
 		for tgt_name, pos_list in pairs(grp_pos) do
 			local inv_set = node_names[tgt_name]
@@ -218,6 +241,7 @@ local function task_plant_seeds(self)
 				self:set_displayed_action("confused as to why planting failed")
 				self:delay_seconds(5)
 			else
+				remember_farming_pos(self, target)
 				self:delay_seconds(2)
 				did_one = true
 			end
@@ -226,40 +250,6 @@ local function task_plant_seeds(self)
 		if not did_one then
 			return true
 		end
-		--return true
-		---- Do we have a spot to plant?
-		--local target = self.task_data.plant_pos
-		--if target ~= nil then
-		--	self.task_data.plant_pos = nil
-		--else
-		--	target = func.search_surrounding(self.object:get_pos(), find_plant_node, searching_range)
-		--	if target == nil then
-		--		return true
-		--	end
-		--end
-
-		-- TODO: scan the surrounding nodes to try to plant the same seeds next
-		-- to each other
-
---		-- pick a random seed to plant
---		local seed_list = {}
---		for k, c in pairs(item_cnts) do
---			table.insert(seed_list, k)
---		end
---		local seed_to_plant = seed_list[math.random(#seed_list)]
---
---		log.action("plant seed %s seed_to_plant @ %s", seed_to_plant, minetest.pos_to_string(target))
---
---		self:set_displayed_action(string.format("planting %s", seed_to_plant))
---		self:go_to(target,2)
---		self.object:set_velocity{x = 0, y = 0, z = 0}
---		local success, ret = self:place(farming_plants.is_seed, target)
---		if not success then
---			working_villages.failed_pos_record(target)
---			self:set_displayed_action("confused as to why planting failed")
---			self:delay_seconds(5)
---		end
---		self:delay_steps(2)
 	end
 end
 working_villages.register_task("plant_seeds", { func = task_plant_seeds, priority = 35 })
@@ -271,11 +261,12 @@ local function task_harvest_and_plant(self)
 		if target == nil then
 			return true
 		end
+		target = vector.round(target)
 
-		local node = minetest:get_node(target)
+		local node_name = minetest.get_node(target).name
 
-		log.action("harvest %s @ %s", node.name, minetest.pos_to_string(target))
-		self:set_displayed_action(string.format("harvesting %s @ %s", node.name, minetest.pos_to_string(target)))
+		log.action("%s: harvest %s @ %s", self.inventory_name, node_name, minetest.pos_to_string(target))
+		self:set_displayed_action(string.format("harvesting %s @ %s", node_name, minetest.pos_to_string(target)))
 
 		local destination = func.find_adjacent_clear(target)
 		if destination then
@@ -286,16 +277,18 @@ local function task_harvest_and_plant(self)
 			destination = target
 		end
 		self:go_to(destination, 2)
-		local plant_data = farming_plants.get_plant(node.name);
+
+		local plant_data = farming_plants.get_plant(node_name);
+		--log.action("digging node=%s @ %s", node_name, minetest.pos_to_string(target))
 		self:dig(target,true)
+		remember_farming_pos(self, target)
 		if plant_data and plant_data.replant then
 			self:delay_seconds(1)
-			log.action("replanting %s", dump(plant_data.replant))
 			for index, value in ipairs(plant_data.replant) do
+				log.action("%s: planting %s @ %s", self.inventory_name, value, minetest.pos_to_string(target))
 				self:place(value, vector.add(target, vector.new(0,index-1,0)))
 			end
 		end
-
 		self:delay_seconds(2)
 	end
 end
@@ -399,39 +392,6 @@ working_villages.register_job("working_villages:job_farmer", {
 	long_description = "I look for farming plants to collect and replant them.",
 	inventory_image	= "default_paper.png^working_villages_farmer.png",
 	logic = farmer_logic,
-	jobfunc = function(self)
-		self:handle_night()
-		self:handle_chest(take_func, put_func)
-		self:handle_job_pos()
-
-		self:count_timer("farmer:search")
-		self:count_timer("farmer:change_dir")
-		self:handle_obstacles()
-		if self:timer_exceeded("farmer:search",20) then
-			self:collect_nearest_item_by_condition(farming_plants.is_plant, searching_range)
-			local target = func.search_surrounding(self.object:get_pos(), find_harvest_node, searching_range)
-			if target ~= nil then
-				local destination = func.find_adjacent_clear(target)
-				if destination then
-					destination = func.find_ground_below(destination)
-				end
-				if destination==false then
-					print("failure: no adjacent walkable found")
-					destination = target
-				end
-				self:go_to(destination)
-				local plant_data = farming_plants.get_plant(minetest.get_node(target).name);
-				self:dig(target,true)
-				if plant_data and plant_data.replant then
-					for index, value in ipairs(plant_data.replant) do
-						self:place(value, vector.add(target, vector.new(0,index-1,0)))
-					end
-				end
-			end
-		elseif self:timer_exceeded("farmer:change_dir",50) then
-			self:change_direction_randomly()
-		end
-	end,
 })
 
 working_villages.farming_plants = farming_plants

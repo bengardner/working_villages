@@ -1030,6 +1030,49 @@ function villager:recall(key)
 	return self.memory[key]
 end
 
+--[[ Remember a rough position, rounded to 8x8x8 node increment.
+8 was chosen because it is smaller than the search area (10) for villagers.
+Uses minetest.get_gametime() as the time.
+The stored layout is: memory[key] = { [pos_hash] = time, ... }
+]]
+function villager:remember_area(key, pos)
+	-- round to 8 node increments to reduce the size of the memory
+	local rpos = vector.multiply(vector.round(vector.divide(pos, 8)), 8)
+	local hash = minetest.hash_node_position(rpos)
+
+	local data = self:recall(key) or {}
+	data[hash] = minetest.get_gametime()
+	self:remember(key, data)
+end
+
+-- forgets any position older than max_dtime. Use forget() to drop everything.
+function villager:forget_area(key, max_dtime)
+	local data = self:recall(key)
+	if data ~= nil then
+		local tref = minetest.get_gametime()
+		local new_data = {}
+		for k, v in pairs(data) do
+			local dt = tref - v
+			if dt <= max_dtime then
+				new_data[k] = v
+			end
+		end
+		self:remember(key, new_data)
+	end
+end
+
+-- Converts the data for key into a sorted list of { pos={x,y,z}, time=gametime },
+-- oldest entry first.
+function villager:recall_area(key)
+	local res = {}
+	for k, v in pairs(self:recall(key) or {}) do
+		local rpos = minetest.get_position_from_hash(k)
+		table.insert(res, { pos=rpos, time=v })
+	end
+	table.sort(res, function (a, b) return a.time < b.time end)
+	return res
+end
+
 --------------------------------------------------------------------
 
 -- villager:new returns a new villager object.

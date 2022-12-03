@@ -41,6 +41,9 @@ local S = minetest.get_translator("pathfinder")
 local log = working_villages.require("log")
 local sorted_hash = working_villages.require("sorted_hash")
 
+local line_store = working_villages.require("nav/line_store")
+local path_lines = line_store.new("pathfinder")
+
 local pathfinder = {}
 
 -- set to do super verbose around this node (REMOVE)
@@ -749,7 +752,7 @@ local function neighbors_collect_diag(neighbors, args)
 					cost = 10 + (8 * dy)
 				end
 			end
-			if cost ~= nil then
+			if cost ~= nil and false then
 				-- double the cost if neighboring cells are not clear
 				-- FIXME: this is an attempt to get the MOB to stay away
 				--        from corners and ledges.
@@ -979,6 +982,8 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 	local target_pos = vector.new(target_area.x, target_area.y, target_area.z)
 	local target_hash = minetest.hash_node_position(target_pos)
 	local target_inside = target_area.inside
+
+	path_lines:draw_line(start_pos, target_pos)
 
 	local h_start = get_estimated_cost(start_pos, target_pos)
 
@@ -1276,6 +1281,8 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 	local below_node = minetest.get_node(below_pos)
 	local in_water = is_node_water(start_node)
 	local in_door = is_node_door(start_node)
+	local flags = { water = in_water, door = in_door }
+
 	args.nc = nodecache.new(start_pos)
 
 	if args.debug > 0 then
@@ -1337,7 +1344,7 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 			end
 		end
 	end
-	return visitedSet, exitSet
+	return visitedSet, exitSet, flags
 end
 
 -------------------------------------------------------------------------------
@@ -1393,7 +1400,7 @@ function pathfinder.can_stand_at(orig_pos, height, who_called)
 			return false
 		end
 	end
-	log.warning("can_stand_at:%s: yes %s below %s", who_called, minetest.pos_to_string(pos), minetest.pos_to_string(below))
+	--log.warning("can_stand_at:%s: yes %s below %s", who_called, minetest.pos_to_string(pos), minetest.pos_to_string(below))
 	return true
 end
 

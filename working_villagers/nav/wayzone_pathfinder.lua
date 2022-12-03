@@ -23,6 +23,9 @@ local wayzone_store = working_villages.require("nav/wayzone_store")
 local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local log = working_villages.require("log")
 local marker_store = working_villages.require("nav/marker_store")
+local markers = marker_store.new("waypoints", {texture="waypoint_sign.png"})
+local markers_waypoint = marker_store.new("waypoints", {texture="testpathfinder_waypoint.png"})
+local markers_visited = marker_store.new("waypoints", {texture="wayzone_node.png"})
 
 local pathfinder = working_villages.require("nav/pathfinder")
 local fail = working_villages.require("failures")
@@ -38,6 +41,8 @@ function wayzone_path.start(start_pos, target_pos, args)
 	assert(start_pos ~= nil)
 	assert(target_pos ~= nil)
 	local start_pos = vector.floor(start_pos)
+
+	marker_store.clear_all()
 
 	local self = {}
 
@@ -68,6 +73,7 @@ function wayzone_path.start(start_pos, target_pos, args)
 		target_pos = pathfinder.make_dest(target_pos)
 	end
 	self.target_pos = target_pos
+	self.wp_count = 1
 
 	return setmetatable(self, { __index = wayzone_path })
 end
@@ -131,7 +137,7 @@ function wayzone_path:next_goal(mob_pos)
 
 		local time_start = minetest.get_us_time()
 
-		marker_store:clear()
+		markers:clear()
 
 		self.wzpath = self.ss:find_path(si.pos, self.target_pos)
 		if self.wzpath == nil then
@@ -145,16 +151,17 @@ function wayzone_path:next_goal(mob_pos)
 
 		log.action(" wzpath has %d in %d ms", #self.wzpath, time_diff/1000)
 
-		marker_store:add(si.pos, "start")
-		marker_store:add(self.target_pos, "target")
+		--markers:add(si.pos, "start")
+		--markers:add(self.target_pos, "target")
 		local wzkeys = {} -- key=wz.key, val=index in wzpath
 		local last_wz
-		for idx, wz in ipairs(self.wzpath) do
+		for idx, ii in ipairs(self.wzpath) do
+			local wz = ii.wz
 			wzkeys[wz.key] = idx
 
 			-- log the wayzone path
 			local cpos, cidx = wayzone.key_decode_pos(wz.key)
-			log.action(" wzpath[%d] = %s  %s:%d", idx, wz.key, minetest.pos_to_string(cpos), cidx)
+			log.action(" wzpath[%d] = %s  %s:%d => %s", idx, wz.key, minetest.pos_to_string(cpos), cidx, minetest.pos_to_string(ii.tpos))
 
 			wayzone_utils.put_marker(wz:get_center_pos(), "center")
 			local mt
@@ -164,7 +171,7 @@ function wayzone_path:next_goal(mob_pos)
 			else
 				mt = string.format("%s", idx)
 			end
-			marker_store:add(wz:get_center_pos(), mt)
+			markers:add(wz:get_center_pos(), mt)
 			last_wz = wz
 		end
 
@@ -186,12 +193,13 @@ function wayzone_path:next_goal(mob_pos)
 	In other words, the only places we can move are into the next wayzone OR
 	the final position in the same wayzone.
 	]]
-
-	local next_wz = self.wzpath[wzpath_idx + 1]
+	local next_wzi = self.wzpath[wzpath_idx + 1]
+	local next_wz
 	local target_area
-	if next_wz ~= nil then
+	if next_wzi ~= nil then
 		-- moving to the next wayzone
-		target_area = next_wz:get_dest(self.target_pos)
+		next_wz = next_wzi.wz
+		target_area = next_wz:get_dest(next_wzi.tpos) --self.target_pos)
 	else
 		-- both cur_pos and target_pos are in the same wayzone
 		target_area = self.target_pos

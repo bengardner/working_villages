@@ -112,59 +112,85 @@ end) ()
 -- register empty item entity definition.
 -- this entity may be hold by villager's hands.
 do
-	minetest.register_craftitem("working_villages:dummy_empty_craftitem", {
-		wield_image = "working_villages_dummy_empty_craftitem.png",
-	})
-
-	local function on_activate(self)
-		-- attach to the nearest villager.
-		local all_objects = minetest.get_objects_inside_radius(self.object:get_pos(), 0.1)
-		for _, obj in ipairs(all_objects) do
-		local luaentity = obj:get_luaentity()
-
-		if working_villages.is_villager(luaentity.name) then
-			self.object:set_attach(obj, "Arm_R", {x = 0.065, y = 0.50, z = -0.15}, {x = -45, y = 0, z = 0})
-			self.object:set_properties{textures={"working_villages:dummy_empty_craftitem"}}
-			return
-		end
-		end
-	end
+	--minetest.register_craftitem("working_villages:dummy_empty_craftitem", {
+	--	wield_image = "working_villages_dummy_empty_craftitem.png",
+	--})
+	--
+	--local function on_activate(self)
+	--	-- attach to the nearest villager.
+	--	local all_objects = minetest.get_objects_inside_radius(self.object:get_pos(), 0.1)
+	--	for _, obj in ipairs(all_objects) do
+	--	local luaentity = obj:get_luaentity()
+	--
+	--	if working_villages.is_villager(luaentity.name) then
+	--		self.object:set_attach(obj, "Arm_R", {x = 0.065, y = 0.50, z = -0.15}, {x = -45, y = 0, z = 0})
+	--		self.object:set_properties{textures={"working_villages:dummy_empty_craftitem"}}
+	--		log.warning("attached thingy to a villager")
+	--		return
+	--	end
+	--	end
+	--	log.warning("DID NOT attach thingy to a villager")
+	--end
+	--
+	--local function on_step(self)
+	--	local all_objects = minetest.get_objects_inside_radius(self.object:get_pos(), 0.1)
+	--	for _, obj in ipairs(all_objects) do
+	--		local luaentity = obj:get_luaentity()
+	--
+	--		if working_villages.is_villager(luaentity.name) then
+	--			local stack = luaentity:get_wield_item_stack()
+	--
+	--			if stack:get_name() ~= self.itemname then
+	--				log.warning("changed wield itemname from %s to %s", self.itemname, stack:get_name())
+	--				if stack:is_empty() then
+	--					self.itemname = ""
+	--					self.object:set_properties{textures={"working_villages:dummy_empty_craftitem"}}
+	--				else
+	--					self.itemname = stack:get_name()
+	--					self.object:set_properties{textures={self.itemname}}
+	--				end
+	--			end
+	--			return
+	--		end
+	--	end
+	--	-- if cannot find villager, delete empty item.
+	--	self.object:remove()
+	--	return
+	--end
 
 	local function on_step(self)
-		local all_objects = minetest.get_objects_inside_radius(self.object:get_pos(), 0.1)
-		for _, obj in ipairs(all_objects) do
-			local luaentity = obj:get_luaentity()
-
-			if working_villages.is_villager(luaentity.name) then
-				local stack = luaentity:get_wield_item_stack()
-
-				if stack:get_name() ~= self.itemname then
-					if stack:is_empty() then
-						self.itemname = ""
-						self.object:set_properties{textures={"working_villages:dummy_empty_craftitem"}}
-					else
-						self.itemname = stack:get_name()
-						self.object:set_properties{textures={self.itemname}}
-					end
-				end
-				return
-			end
+		-- We get detached when the parent dies or is removed
+		local parent = self.object:get_attach()
+		if parent == nil then
+			self.object:remove()
+			return
 		end
-		-- if cannot find villager, delete empty item.
-		self.object:remove()
-		return
+		local wield_item = self.object:get_properties().wield_item
+
+		-- get the villager
+		local ent = parent:get_luaentity()
+		local wield_name = ent:get_wield_item_stack():get_name()
+		local is_visible = true
+		if wield_name == "" then
+			wield_name = "air"
+			is_visible = false
+		end
+		if wield_name ~= wield_item then
+			self.object:set_properties({wield_item=wield_name, is_visible=is_visible})
+			log.action("%s: change wield_item from %s to %s", ent.inventory_name, wield_item, wield_name)
+		end
 	end
 
-	minetest.register_entity("working_villages:dummy_item", {
-		hp_max		    = 1,
-		visual		    = "wielditem",
-		visual_size	  = {x = 0.025, y = 0.025},
-		collisionbox	= {0, 0, 0, 0, 0, 0},
-		physical	    = false,
-		textures	    = {"air"},
-		on_activate	  = on_activate,
+	-- this is created and attached when the villager is activated
+	minetest.register_entity("working_villages:wield_entity", {
+		visual        = "wielditem",
+		wield_item    = "default:axe_steel",
+		visual_size   = {x = 0.025, y = 0.025},
+		collisionbox  = {0, 0, 0, 0, 0, 0},
+		physical      = false,
+		pointable     = false,
+		static_save   = false,
 		on_step       = on_step,
-		itemname      = "",
 	})
 end
 
@@ -460,6 +486,10 @@ function working_villages.register_villager(product_name, def)
 		if type(self.memory) ~= "table" then
 			self.memory = {}
 		end
+
+		local hand = minetest.add_entity(self.object:get_pos(), "working_villages:wield_entity")
+		hand:set_attach(self.object, "Arm_Right", {x=0, y=5.5, z=3}, {x=-90, y=225, z=90}, true)
+		hand:set_properties({wield_item="default:axe_mese", visual_size={x=0.25,y=0.25}})
 
 		working_villages.active_villagers[self.inventory_name] = self
 

@@ -23,9 +23,10 @@ If a villager doesn't have a home or village then create shelter.
 ## Pickup stuff -- better check for finding place we can stand.
 
 Use new working_village.nav:find_standable_near() for pickup verification.
-No point in trying to 
+No point in trying to pick up something that we can't reach.
 
 ## Pathfinder
+
 
 ## AI glitch
 
@@ -175,7 +176,7 @@ function execute_queues(self)
     			self.lqueue = {}
     		end
     	end
-    
+
 
 -- adds a task at the given priority, which will be started with args passed to the function
 function task_add(self, name, priority, args)
@@ -214,7 +215,7 @@ Change find pickup to check if the object position is in the wayzone.
 
 
 
-## Food 
+## Food
 
 Looks like nodes can be registered with a group named food_xxx
 
@@ -235,3 +236,131 @@ food_rice
 Need to determine how much hunger each removes.
 
 
+# AI: General
+
+After a bit of research, it seems the 'best' approach is to periodically call a "check" function, which queues tasks.
+
+There isn't a 1:1 relationship between check and tasks. Or, rather, there is some overlap.
+
+It looks like most of the AI script can be shared with some job-specific check tasks.
+
+  * check_farmer()
+      * add "harvest_and_replant" task if there is something harvestable around
+      * add "plant" task if we have seed AND have somewhere to plant
+      * add "create_farm" task if we found a water node with a soil node within 2 nodes
+      * add "check_jobsite" task to travel between old jobsites
+      * add "gather_items" tasks if there are nay items that we want in sight AND we have inventory space
+
+  * check_woodcutter()
+      * add "chop_tree" task if there are trees we can chop around AND we have inventory space for logs
+      * add "plant_sapling" task if we have saplings AND we can find somewhere to plant a sapling
+      * add "gather_items" task if there are any items that we want in sight AND we have inventory space
+      * add "check_jobsite" task to travel between old jobsites (where we planted a sapling or chopped a tree)
+
+  * check_plant_collector()
+      * add "harvest_node" task if there is something to harvest
+      * add "check_jobsite" task to travel between old jobsites (where we previously found stuff)
+
+  * check_snow_clearer()
+      * add "clear_snow" task if snow is found over a path, next to a house, etc (not just anywhere)
+      * add "wander_village" task that wanders around the village roads
+
+  * check_path_builder()
+      * build paths between buildings? villages?
+
+  * check_builder()
+      * add "check_jobsite" task to travel between old jobsites
+      * gather materials
+      * craft materials
+      * use a "scaffolding" node for each planned node
+          * shapes? solid, stair, etc
+          * can only place a matching node over the "scaffolding"
+
+  * torcher??
+
+  * follow_player ?? why? replace with "supporter" 
+      * picks up stuff
+      * carries a backpack (chest on back, extra inventory)
+      * ranged attacks on enemies
+
+  * guard
+      * stationary or patrol or follow player
+      * alerted when enemies attack
+      * attacks enemies
+      * alternate schedules available (night, day shift)
+
+
+In all cases, there are common tasks like
+ 
+  * go home, go to bed
+  * go to town center
+  * chat with other villager (exchange info)
+  * eat when hungry
+  * drink when thirsty
+  * acquire food
+  * offload excess inventory to a chest (village or personal)
+
+
+Other stuff:
+
+  * Add economy
+    * Add coin value to everything?
+    * Players can remove or add stuff to village chests in exchange for coins
+    * villagers do the same
+    * where do coins come from??
+
+
+# AI: Farmer
+
+## Done
+
+  * Added berry bush support
+  * Using efficient planting logic
+
+## Broken
+
+  * Replant after dig doesn't work
+
+## ToDo
+
+### Bonemeal/fertiliser
+
+Collect and use
+
+  * bonemeal:fertiliser
+  * bonemeal:mulch
+  * bonemeal:bonemeal
+
+### Use Scythe to harvest, if available.
+
+
+# AI: Woodcutter
+
+Use the best axe possible (highest "choppy")
+
+```lua
+	local axes = {}
+	for name, def in pairs(minetest.registered_tools) do
+		if def.tool_capabilities and
+			def.tool_capabilities.groupcaps and
+			def.tool_capabilities.groupcaps.choppy
+		then
+			log.action("name: %s %s", name, dump(def))
+
+			axes[name] = def
+		end
+	end
+```
+
+Will need to figure out which axe to pick. I assume the lowest times for the typical tree would be best.
+Or may just pick any that has a high enough maxlevel for the tree.
+
+All trees except pine have choppy=2 and oddly_breakable_by_hand. pine has choppy=3.
+
+Probably need a "pick best tool" to dig a node. Possibly add as part of the generic "dig" function.
+
+
+# Graphics
+
+Want to show a villager holding something.
+So far, they are all empty handed.

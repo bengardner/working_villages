@@ -90,7 +90,7 @@ Test if a position (global or local) is inside the zone.
 
 wz:exited_to(wz_other)
 Test if the current zone has an exit that maps to the other zone.
-This iterates over the appropriate exit nodes and calls wz_other:insied(pos)
+This iterates over the appropriate exit nodes and calls wz_other:inside(pos)
 
 ** Iteration
 wz:iter_exited(adjacent_cpos)
@@ -449,7 +449,7 @@ We could save some memory by using the bounding box and have the bitarray relati
 to that. If a wayzone had one node, it would take 1 byte for the visited bitarray.
 Wayzones that were flat (dy=1) would use even less.
 ]]
-function wayzone:finish(in_water)
+function wayzone:finish(in_water, in_door)
 	-- pack the visited table into a fixed-length string.
 	assert(type(self.visited) == "table")
 	--self:minpackvisited()
@@ -459,6 +459,7 @@ function wayzone:finish(in_water)
 	end
 	self.visited = table.concat(tmp, '')
 	self.in_water = in_water or false
+	self.in_door = in_door or false
 
 	-- pack the exited info into a variable-length string
 	-- REVISIT: use a bitmap for X,Z,+Y sides (8 bytes or u64)
@@ -523,19 +524,30 @@ function wayzone:inside(pos)
 end
 
 --[[
-Check to see if this zone exits into @wz_other by checking the appropriate
-exit positions against the zone content.
+Counts the number of exit nodes that are in the other wayzone.
+Stops counting at max_count, default 1.
 ]]
-function wayzone:exited_to(wz_other)
+function wayzone:exited_to(wz_other, max_count)
+	max_count = max_count or 1
+	local count = 0
+	local pcnt = 0
 	for pos in self:iter_exited(wz_other.cpos) do
+		pcnt = pcnt + 1
 		if wz_other:inside(pos) then
+			count = count + 1
 			--log.action(" %s-%d connects to %s-%d",
 			--	minetest.pos_to_string(self.cpos), self.index,
 			--	minetest.pos_to_string(wz_other.cpos), wz_other.index)
-			return true
+			if count >= max_count then
+				break
+			end
 		end
 	end
-	return false
+	if count == 0 and pcnt > 0 then
+		log.warning("exited_to: no hit for %s -> %s  pcnt=%d", self.key, wz_other.key, pcnt)
+	end
+
+	return count
 end
 
 --[[
@@ -585,7 +597,7 @@ function wayzone:iter_exited(adjacent_cpos)
 	end
 end
 
--- iterate over the visited nodesm returning the global position of each
+-- iterate over the visited nodes, returning the global position of each
 function wayzone:iter_visited()
 	-- This needs to work before and after finish()
 	local fcn
@@ -776,13 +788,13 @@ function wayzone.outside_wz(target_area, allowed_wz)
 end
 
 -- record that we have a link to self to @to_wz
-function wayzone:link_add_to(to_wz, gCost)
-	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key, gCost=gCost }
+function wayzone:link_add_to(to_wz, xcnt)
+	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key, xcnt=xcnt }
 end
 
 -- record that we have a link from @from_wz to self
-function wayzone:link_add_from(from_wz, gCost)
-	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key, gCost=gCost }
+function wayzone:link_add_from(from_wz, xcnt)
+	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key, xcnt=xcnt }
 end
 
 -- check if we have a link to the wayzone
@@ -883,6 +895,117 @@ function wayzone.new(cpos, index)
 	wz.link_to = {}   -- links to other wayzones, key=other_wz.key
 	wz.link_from = {} -- links from other wayzones, key=other_wz.key
 	return setmetatable(wz, { __index = wayzone })
+end
+
+-------------------------------------------------------------------------------
+
+--[[
+Expand the cube in any direction so that ALL new coverage is in the self.visited
+store but not in the visited map.
+Update @mm and @visited.
+@return true=expanded in a direction (-x,+x,-y,+y,-z,+z), false=cannot expand
+]]
+local function expand_cube(self, mm, visited)
+	-- check to see if all nodes in minp/maxp are in self.visited, but not in @visited
+	local function all_good(minp, maxp)
+		for x = minp.x, maxp.x do
+			for z = minp.z, maxp.z do
+				for y = minp.y, maxp.y do
+					local tpos = vector.new(x, y, z)
+					local thsh = minetest.hash_node_position(tpos)
+					-- cannot have already visited and must be inside the wayzone
+					if visited[thsh] == true or not self:inside(tpos) then
+						return false
+					end
+				end
+			end
+		end
+		return true
+	end
+
+	-- try -x
+	local minp = vector.new(mm.minp.x - 1, mm.minp.y, mm.minp.z)
+	local maxp = vector.new(mm.minp.x - 1, mm.maxp.y, mm.maxp.z)
+	if all_good(minp, maxp) then
+		mm.minp.x = mm.minp.x - 1
+		log.action("# expanded -x")
+		return true
+	end
+
+	-- try +x
+	minp.x = mm.maxp.x + 1
+	maxp.x = minp.x
+	if all_good(minp, maxp) then
+		mm.maxp.x = mm.maxp.x + 1
+		log.action("# expanded +x")
+		return true
+	end
+
+	-- try -z
+	minp = vector.new(mm.minp.x, mm.minp.y, mm.minp.z - 1)
+	maxp = vector.new(mm.maxp.x, mm.maxp.y, mm.minp.z - 1)
+	if all_good(minp, maxp) then
+		mm.minp.z = mm.minp.z - 1
+		log.action("# expanded -z")
+		return true
+	end
+
+	-- try +z
+	minp.z = mm.maxp.z + 1
+	maxp.z = minp.z
+	if all_good(minp, maxp) then
+		mm.maxp.z = mm.maxp.z + 1
+		log.action("# expanded +z")
+		return true
+	end
+
+	-- try -y
+	minp = vector.new(mm.minp.x, mm.minp.y - 1, mm.minp.z)
+	maxp = vector.new(mm.maxp.x, mm.minp.y - 1, mm.maxp.z)
+	if all_good(minp, maxp) then
+		mm.minp.y = mm.minp.y - 1
+		log.action("# expanded -y")
+		return true
+	end
+
+	-- try +y
+	minp.y = mm.maxp.y + 1
+	maxp.y = minp.y
+	if all_good(minp, maxp) then
+		mm.maxp.y = mm.maxp.y + 1
+		log.action("# expanded +y")
+		return true
+	end
+
+	return false
+end
+
+-- split the wayzone into boxes (not useful right now)
+function wayzone:split()
+	log.action("wayzone:split %s", self.key)
+	local new_wz = {}
+	local visited = {} -- key=pos hash, val=true/false
+
+	for pos in self:iter_visited() do
+		local hash = minetest.hash_node_position(pos)
+		if visited[hash] ~= true then
+			visited[hash] = true
+
+			local mm = { minp = vector.copy(pos), maxp = vector.copy(pos) }
+			while expand_cube(self, mm, visited) do
+			end
+			for x = mm.minp.x, mm.maxp.x do
+				for y = mm.minp.y, mm.maxp.y do
+					for z = mm.minp.z, mm.maxp.z do
+						local vpos = vector.new(x,y,z)
+						local vhsh = minetest.hash_node_position(vpos)
+						visited[vhsh] = true
+					end
+				end
+			end
+			log.action("wayzone:split %s - %s", minetest.pos_to_string(mm.minp), minetest.pos_to_string(mm.maxp))
+		end
+	end
 end
 
 return wayzone

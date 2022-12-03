@@ -47,6 +47,7 @@ local fail = working_villages.require("failures")
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local marker_store = working_villages.require("nav/marker_store")
+local markers = marker_store.new("dots", {texture="wayzone_node.png", yoff=-0.2})
 
 local wayzone_store = {}
 
@@ -89,6 +90,7 @@ function wayzone_store.get(args)
 
 	local ss = wayzone_store.stores[self.key]
 	if ss ~= nil then
+		--log.warning("wayzone_store: found %s", self.key)
 		return ss
 	end
 
@@ -101,15 +103,16 @@ end
 
 -------------------------------------------------------------------------------
 --[[
-Refresh the links from from_wzc to to_wzc
+Refresh the links between from_wzc and to_wzc.
 This is called right before the wayzones are used in wzpath_rebuild()
 We are only interested in updating links going from @from_wzc to @to_wzc.
 
 This updates from_wz.links_to and to_wz.links_from.
+This is typically called twice with the two args swapped.
 ]]
 local function wayzones_refresh_links(from_wzc, to_wzc)
 	-- No point in looking at self-links if there are less than 2 wayzones OR
-	-- either wayzone chunk is empty (under gound).
+	-- either wayzone chunk is empty (under ground/in air).
 	if (from_wzc.hash == to_wzc.hash and #from_wzc < 2) or #from_wzc == 0 or #to_wzc == 0 then
 		--log.action("wayzones_refresh_links: no point %x (%d) g=%d -> %x (%d) g=%d",
 		--	from_wzc.hash, #from_wzc, from_wzc.generation,
@@ -130,31 +133,20 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 	--	from_wzc.hash, #from_wzc, from_wzc.generation,
 	--	to_wzc.hash, #to_wzc, to_wzc.generation)
 
-	-- clear existing links: from_wzc -> to_wzc
-	-- We don't care about incoming links, as we won't be using them.
-	if to_wzc.hash ~= from_wzc.hash then
-		for _, wz in ipairs(from_wzc) do
-			wz:link_del(to_wzc.hash)
-		end
-	end
-
 	-- build new links
-	for to_idx, to_wz in ipairs(to_wzc) do
-		for from_idx, from_wz in ipairs(from_wzc) do
+	for _, to_wz in ipairs(to_wzc) do
+		for _, from_wz in ipairs(from_wzc) do
 			-- don't link a wayzone to itself (save some CPU cycles of wasted effort)
 			if from_wz.key ~= to_wz.key then
 				--log.action("wayzones_refresh_links: check %s -> %s",
 				--	from_wz.key, to_wz.key)
 				-- if from_wz exits into to_wz, then we have a winner
-				if from_wz:exited_to(to_wz) then
-					--log.action(" + wayzone_link %s => %s g=%d",
-					--	from_wz.key, to_wz.key, to_wzc.generation)
-					-- FIXME: need to do a pathfinder.find_path() between the node
-					-- centers to get the real cost. Important to avoid water.
-					--local cost = pathfinder.get_estimated_cost(from_wz:get_center_pos(), to_wz:get_center_pos())
-					local cost = vector.distance(from_wz:get_center_pos(), to_wz:get_center_pos())
-					from_wz:link_add_to(to_wz, cost)
-					to_wz:link_add_from(from_wz, cost)
+				local xcnt = from_wz:exited_to(to_wz, 32)
+				if xcnt > 0 then
+					--log.action(" + wayzone_link %s => %s g=%d xcnt=%d",
+					--	from_wz.key, to_wz.key, to_wzc.generation, xcnt)
+					from_wz:link_add_to(to_wz, xcnt)
+					to_wz:link_add_from(from_wz, xcnt)
 				end
 			end
 		end
@@ -162,6 +154,11 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 
 	-- note that we updated the links to the adjacent chunk
 	from_wzc:gen_update(to_wzc)
+end
+
+function wayzone_store:refresh_links(wzc1, wzc2)
+	wayzones_refresh_links(wzc1, wzc2)
+	wayzones_refresh_links(wzc2, wzc1)
 end
 
 -------------------------------------------------------------------------------
@@ -261,7 +258,7 @@ local function process_chunk(self, chunk_hash)
 			if self.debug > 1 then
 				log.action(" Probe Slot %s", minetest.pos_to_string(tpos))
 			end
-			local visitHash, exitHash = pathfinder.wayzone_flood(tpos, area)
+			local visitHash, exitHash, wzFlags = pathfinder.wayzone_flood(tpos, area)
 			local wz = wzc:new_wayzone()
 			for h, _ in pairs(visitHash) do
 				local pp = minetest.get_position_from_hash(h)
@@ -273,7 +270,7 @@ local function process_chunk(self, chunk_hash)
 				--log.action(" exited  %12x %s", h, minetest.pos_to_string(pp))
 				wz:insert_exit(pp)
 			end
-			wz:finish()
+			wz:finish(wzFlags.water, wzFlags.door)
 
 			if self.debug > 0 then
 				local aa = {}
@@ -352,7 +349,7 @@ end
 
 -------------------------------------------------------------------------------
 
--- Grab a wayzone by key. the key contains the chunk hash and the wayzone index.
+-- Grab a wayzone by key. The key contains the chunk hash and the wayzone index.
 function wayzone_store:wayzone_get_by_key(key)
 	local chash, cidx = wayzone.key_decode(key)
 	local wzc = self:chunk_get_by_hash(chash, true)
@@ -386,6 +383,8 @@ function wayzone_store:chunk_dirty(pos)
 		end
 	end
 	local max_y = math.max(self.jump_height, self.fear_height)
+	--log.warning("wzc:chunk_dirty %s max_y=%d",
+	--	minetest.pos_to_string(pos), tostring(max_y))
 	for x=-1,1 do
 		for z=-1,1 do
 			for y=-max_y,max_y,max_y do
@@ -497,6 +496,8 @@ FIXME: We need to set some bounds around the search or this could scan a lot
        which means up to 2000 chunks can be checked.
 ]]
 function wayzone_store:find_path(start_pos_raw, target_pos)
+	markers:clear()
+
 	-- Grab the wayzone for start_pos and end_pos
 	local start_pos = self:round_position(start_pos_raw)
 	log.action("find_path: start %s => %s", minetest.pos_to_string(start_pos_raw), minetest.pos_to_string(start_pos))
@@ -516,7 +517,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	if si.wz.key == di.wz.key then
 		--log.action("same wayzone for %s and %s",
 		--	minetest.pos_to_string(si.pos), minetest.pos_to_string(di.pos))
-		return { si.wz }
+		return { {wz=si.wz, tpos=di.pos} }
 	end
 
 	-- If si.wz is directly connected to di.wz, we return just those two.
@@ -525,7 +526,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		wayzones_refresh_links(si.wzc, di.wzc)
 		if si.wz:link_test_to(di.wz) then
 			-- log.warning(" ++ direct link detected")
-			return { si.wz, di.wz }
+			return { {wz=si.wz, tpos=di.pos}, {wz=di.wz, tpos=di.pos} }
 		end
 	end
 
@@ -541,7 +542,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		--	tostring(fwd_rev.fwd),
 		--	minetest.pos_to_string(item.cur.pos),
 		--	item.cur.key, item.hCost, item.gCost)
-		-- marker_store:add(item.cur.pos, string.format("v=%d", item.hCost + item.gCost))
+		-- markers:add(item.cur.pos, string.format("v=%d", item.hCost + item.gCost))
 
 		-- Add the starting wayzone (insert populates sl_key)
 		fwd_rev.posSet:insert(item)
@@ -550,24 +551,24 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- Add the starting wayzone to each walker
 	add_open(fwd, {
 		--parent_key=nil, -- first entry doesn't have a parent
-		cur={ pos=si.wzc.pos, hash=si.wzc.hash, index=si.wz.index, key=si.wz.key, spos=si.pos },
+		cur={ pos=si.wzc.pos, hash=si.wzc.hash, index=si.wz.index, key=si.wz.key, spos=si.pos, tpos=di.pos },
 		hCost=hCost, gCost=0 })
 	add_open(rev, {
 		--parent_key=nil, -- last entry doesn't have a backwards parent
-		cur={ pos=di.wzc.pos, hash=di.wzc.hash, index=di.wz.index, key=di.wz.key, spos=di.pos  },
+		cur={ pos=di.wzc.pos, hash=di.wzc.hash, index=di.wz.index, key=di.wz.key, spos=di.pos, tpos=si.pos },
 		hCost=hCost, gCost=0 })
 
 	local function log_fwd_rev(name, tab)
 		for k, v in pairs(tab.posSet.data) do
 			if v.sl_active == true then
-				log.action(" %s Open %s gCost=%d hCost=%d fCost=%d p=%s", name,
-					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key))
+				log.action(" %s Open %s gCost=%d hCost=%d fCost=%d p=%s t=%s", name,
+					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key), minetest.pos_to_string(v.cur.tpos or vector.zero()))
 			end
 		end
 		for k, v in pairs(tab.posSet.data) do
 			if v.sl_active ~= true then
-				log.action(" %s Clos %s gCost=%d hCost=%d fCost=%d p=%s", name,
-					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key))
+				log.action(" %s Clos %s gCost=%d hCost=%d fCost=%d p=%s t=%s", name,
+					k, v.gCost, v.hCost, v.gCost + v.hCost, tostring(v.parent_key), minetest.pos_to_string(v.cur.tpos or vector.zero()))
 			end
 		end
 	end
@@ -583,54 +584,99 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	local function dual_rollup(ref_key)
 		for _, item in pairs(fwd.posSet.data) do
 			local wz = self:wayzone_get_by_key(item.cur.key)
-			marker_store:add(wz:get_center_pos(), string.format("fc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+			markers:add(item.cur.spos, string.format("fc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+			--markers:add(wz:get_center_pos(), string.format("fc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
 		end
 		for _, item in pairs(rev.posSet.data) do
 			local wz = self:wayzone_get_by_key(item.cur.key)
-			marker_store:add(wz:get_center_pos(), string.format("rc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+			markers:add(item.cur.spos, string.format("rc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
+			--markers:add(wz:get_center_pos(), string.format("rc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
 		end
 
 		log.action("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key)
 		log_all()
 		--log.action("  dual_rollup - start")
 		-- roll up the path and store in wzp.wzpath
+		local choke_points = {}
+		local function choke_point_add(cp)
+			local ch = minetest.hash_node_position(cp)
+			choke_points[ch] = cp
+		end
+		local function choke_point_get(wz, old_tgt)
+			for hh, pp in pairs(choke_points) do
+				if wz:inside(pp) then
+					return pp
+				end
+			end
+			return old_tgt
+		end
+
 		local rev_wzpath = {}
 		local cur = fwd.posSet:get(ref_key)
+		local tgt_pos = di.pos
 		-- check parent_key because we don't want to add the start wayzone, as that is added below
 		-- FIXME: the rev_wzpath/wzpath len checks are to protect against coding error - remove after testing
 		while cur ~= nil and cur.parent_key ~= nil and #rev_wzpath < 200 do
 			--log.action("  fwd %s p=%s", cur.sl_key, cur.parent_key)
-			table.insert(rev_wzpath, self:wayzone_get_by_key(cur.sl_key))
+			table.insert(rev_wzpath, { wz=self:wayzone_get_by_key(cur.sl_key), tpos=tgt_pos })
+			if cur.cur.tpos ~= nil then
+				choke_point_add(cur.cur.tpos)
+				tgt_pos = cur.cur.tpos
+			end
 			cur = fwd.posSet:get(cur.parent_key)
 		end
-		local wzpath = { si.wz }
+		--local wzpath = { si.wz }
+		table.insert(rev_wzpath, { wz=si.wz, tpos=tgt_pos })
+		local wzpathi = {}
 		for idx=#rev_wzpath,1,-1 do
-			table.insert(wzpath, rev_wzpath[idx])
+			table.insert(wzpathi, rev_wzpath[idx])
 		end
 		-- trace forward through rev.closeSet, adding to wzpath
 		local cur = rev.posSet:get(ref_key)
 		while cur ~= nil and cur.parent_key ~= nil do -- and cur.parent_key ~= di.wz.key and #wzpath < 200 do
 			--log.action("  rev %s p=%s", cur.sl_key, cur.parent_key)
-			table.insert(wzpath, self:wayzone_get_by_key(cur.parent_key)) -- adding parent, not cur.key
+			if cur.cur.tpos ~= nil then
+				choke_point_add(cur.cur.tpos)
+				tgt_pos = cur.cur.tpos
+			end
+			table.insert(wzpathi, { wz=self:wayzone_get_by_key(cur.parent_key), tpos=tgt_pos}) -- adding parent, not cur.key
 			cur = rev.posSet:get(cur.parent_key)
 		end
 
-		--for idx, wz in ipairs(wzpath) do
-		--	--wayzone_utils.log_table("wayzone", wz)
-		--	log.action("  [%d] %s -- %s %d", idx, wz.key,
-		--		minetest.pos_to_string(wz.cpos), wz.index)
-		--end
-
-		local spos = si.pos
-		for idx=2,#wzpath-1 do
-			local wz = wzpath[idx]
-			local cpos = wz:get_closest(spos)
-			marker_store:add(cpos, string.format("closest=%d", idx))
-			spos = cpos
+		local wzpath = {}
+		for idx, ii in ipairs(wzpathi) do
+			local wz = ii.wz
+			if wz.in_door then
+				choke_point_add(wz:get_center_pos())
+			end
+			table.insert(wzpath, wz)
+			--wayzone_utils.log_table("wayzone", wz)
+			log.action("  [%d] %s -- %s %d => %s", idx, wz.key,
+				minetest.pos_to_string(wz.cpos), wz.index, minetest.pos_to_string(ii.tpos))
 		end
-		return wzpath
+		for hh, pp in pairs(choke_points) do
+			log.action("  choke: %s", minetest.pos_to_string(pp))
+		end
+		do
+			local wzpath_cp = {}
+			local tgt_pos = di.pos
+			for idx = #wzpath,1,-1 do
+				tgt_pos = choke_point_get(wzpath[idx], tgt_pos)
+				wzpath_cp[idx] = { wz=wzpath[idx], tpos=tgt_pos }
+			end
+
+			for idx, ii in ipairs(wzpath_cp) do
+				local wz = ii.wz
+				log.action("  CP [%d] %s -- %s %d => %s", idx, wz.key,
+					minetest.pos_to_string(wz.cpos), wz.index, minetest.pos_to_string(ii.tpos))
+			end
+			return wzpath_cp
+		end
+		--return wzpath
 	end
 
+	local fwd_zero = false
+	local rev_zero = false
 	-- NOTE: "steps" is to prevent infinite loop/hang due to coding error.
 	--       It limits the number of chunks examined. Better would be to set
 	--       search limits.
@@ -641,7 +687,18 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		local ff = fwd.posSet:pop_head()
 		local rr = rev.posSet:pop_head()
 
-		--log.action("wayzone.find_path step fwd=%s rev=%s", ff.cur.key, rr.cur.key)
+		log.action("wayzone.find_path step fwd=%s [%d] rev=%s [%d]",
+			ff.cur.key, fwd.posSet.count, rr.cur.key, rev.posSet.count)
+		if fwd_zero and fwd.posSet.count == 0 then
+			log.action("wayzone.find_path fwd zero %s", ff.cur.key)
+			markers:add(ff.cur.spos, "zero")
+			ff.cur.tpos = ff.cur.spos
+		end
+		if rev_zero and rev.posSet.count == 0 then
+			log.action("wayzone.find_path rev zero %s", rr.cur.key)
+			markers:add(rr.cur.spos, "zero")
+			rr.cur.tpos = rr.cur.spos
+		end
 
 		-- does the fwd node join a rev closed record?
 		if ff.cur.key == di.wz.key or rev.posSet:get(ff.cur.key) ~= nil then
@@ -664,19 +721,25 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 
 			-- iterate over the adjacent chunks, refresh links with this chunk
 			local adj_hash = {}
-			-- visit the first 6 adjacent items (skip self, as that never needs refresh)
-			for aidx=1,6 do
-				-- We only care if we have exit nodes on that side
-				if xx_wz.exited[aidx] ~= nil then
-					local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
-					local n_chash = minetest.hash_node_position(n_cpos)
-					--log.action("check adjacent %x %s", n_chash, minetest.pos_to_string(n_cpos))
-					local n_wzd = self:chunk_get_by_hash(n_chash)
-					if n_wzd ~= nil then
-						wayzones_refresh_links(xx_wzc, n_wzd)
-						wayzones_refresh_links(n_wzd, xx_wzc)
-						adj_hash[n_chash] = n_wzd
-					end
+			local adj_hash_pos = {}
+
+			-- refresh all adjacent chunks, which handles the 'dirty' state
+			for aidx, avec in pairs(wayzone.chunk_adjacent) do
+				local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
+				local n_chash = minetest.hash_node_position(n_cpos)
+				adj_hash_pos[aidx] = n_chash
+				self:chunk_get_by_hash(n_chash)
+			end
+
+			-- iterate over the exit groups and refresh links
+			-- NOTE: the presense of an exit node indicates a link to the neighbor
+			for aidx, _ in pairs(xx_wz.exited) do
+				local n_chash = adj_hash_pos[aidx]
+				local n_wzd = self:chunk_get_by_hash(n_chash)
+				if n_wzd ~= nil then
+					wayzones_refresh_links(xx_wzc, n_wzd)
+					wayzones_refresh_links(n_wzd, xx_wzc)
+					adj_hash[n_chash] = n_wzd
 				end
 			end
 
@@ -690,29 +753,36 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			-- Add an entry for each link from this wayzone
 			for _, link in pairs(link_tab) do
 				local link_wzc = adj_hash[link.chash]
-				--log.action("   + neighbor link %s => %s", xx_wz.key, link.key)
+				--log.action("   + neighbor link %s => %s %s", xx_wz.key, link.key, tostring(link.xcnt))
 				if link_wzc == nil then
 					-- TODO: this is a link to a non-adjacent chunk. We need to check the gen of each
 					--       chunk in the chain and make sure they are current.
+					log.warning("   + no WZC !!")
 				else
 					local link_wz = link_wzc[link.index]
 					--log.action("   + hit")
+					local new_spos = link_wz:get_closest(xx.cur.spos)
+					local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
 					-- don't store a worse walker if we already visited this wayzone
 					local old_item = fr.posSet:get(link.key)
 					if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
-						log.action("   + adding link %s -> %s gc=%d", xx_wz.key, link.key, link.gCost)
-						local new_spos = link_wz:get_closest(xx.cur.spos)
-						local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
+						log.action("   + adding link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
 						add_open(fr, {
 							parent_key=xx.cur.key,
 							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key, spos=new_spos },
 							hCost=wz_estimated_cost(di.wz, link_wzc[link.index]),
 							gCost=xx.gCost + new_gCost
 						})
+					else
+						log.action("   + exists link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
 					end
 				end
 			end
 		end
+
+		-- save zero state before adding neighbors
+		fwd_zero = (fwd.posSet.count == 0)
+		rev_zero = (rev.posSet.count == 0)
 
 		do_neighbors(fwd, ff, true)
 		do_neighbors(rev, rr, false)
@@ -720,7 +790,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	log.warning("wayzone path fail: %s -> %s, steps=%d",
 		minetest.pos_to_string(si.pos),
 		minetest.pos_to_string(di.pos), steps)
-	--log_all()
+	log_all()
 	return nil
 end
 
@@ -1005,7 +1075,7 @@ end
 -- Mark the chunk as dirty in all stores.
 local function dirty_chunk_data(pos)
 	log.warning("dirty_chunk_data %s", minetest.pos_to_string(pos))
-	for _, ss in ipairs(wayzone_store.stores) do
+	for _, ss in pairs(wayzone_store.stores) do
 		ss:chunk_dirty(pos)
 	end
 end

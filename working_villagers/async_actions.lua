@@ -29,7 +29,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	assert(dest_pos ~= nil)
 
 	self.destination = vector.round(dest_pos)
-	wayzone_utils.put_marker(self.destination, "target")
+	--wayzone_utils.put_marker(self.destination, "target")
 
 	-- calculate the path with a radius
 	local start_pos = vector.round(self.object:get_pos())
@@ -39,7 +39,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	--	self.path = pathfinder.find_path_sphere(start_pos, self, self.destination, dest_radius)
 	--end
 
-	wayzone_utils.put_marker(start_pos, "start")
+	--wayzone_utils.put_marker(start_pos, "start")
 
 	local wzp = wayzone_path.start(start_pos, self.destination)
 	self.cur_goal = nil

@@ -7,37 +7,68 @@ local S = default.get_translator
 
 local log = working_villages.require("log")
 local pathfinder = working_villages.require("nav/pathfinder")
+local wayzone = working_villages.require("nav/wayzone")
 local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
 local wayzone_store = working_villages.require("nav/wayzone_store")
 local wayzone_utils = working_villages.require("nav/wayzone_utils")
 
 local waypoint_tool_name = "working_villages:waypoint_tool"
 
+local function refresh_links(ss, pos)
+	local wzc = ss:chunk_get_by_pos(pos)
+	if wzc == nil then
+		return
+	end
+	local chunk_size = wayzone.chunk_size
+	for x = wzc.pos.x - chunk_size, wzc.pos.x + chunk_size, chunk_size do
+		for y = wzc.pos.y - chunk_size, wzc.pos.y + chunk_size, chunk_size do
+			for z = wzc.pos.z - chunk_size, wzc.pos.z + chunk_size, chunk_size do
+				local other_pos = vector.new(x,y,z)
+				local other_wzc = ss:chunk_get_by_pos(other_pos)
+				ss:refresh_links(wzc, other_wzc)
+			end
+		end
+	end
+end
+
 local function do_waypoint_flood(user, pos, all_zones)
 	log.action("* waypoint_tool start @ "..minetest.pos_to_string(pos).." "..(all_zones and "full" or "single"))
 
 	local ss = wayzone_store.get()
+
+	refresh_links(ss, pos)
 
 	local ii = ss:get_pos_info(pos, "tool")
 	local upos = user:get_pos()
 
 	if all_zones then
 		for idx, wz in ipairs(ii.wzc) do
-			log.action("* waypoint_tool show %s", wz.key)
+			log.action("* waypoint_tool show %s : %s-%s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
 			wayzone_utils.show_particles_wz(wz)
-			local close_pos = wz:get_closest(upos)
-			if close_pos ~= nil then
-				wayzone_utils.put_marker(close_pos, "target")
-			end
+			--local close_pos = wz:get_closest(upos)
+			--if close_pos ~= nil then
+			--	wayzone_utils.put_marker(close_pos, "target")
+			--end
 		end
 	else
 		if ii.wz ~= nil and ii.wz:inside(pos) then
-			log.action("* waypoint_tool show %s", ii.wz.key)
-			wayzone_utils.show_particles_wz(ii.wz)
-			local close_pos = ii.wz:get_closest(upos)
-			if close_pos ~= nil then
-				wayzone_utils.put_marker(close_pos, "target")
+			local wz = ii.wz
+			log.action("* waypoint_tool show %s : %s-%s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
+			wayzone_utils.show_particles_wz(wz)
+			--log.action("* wz: %s", dump(wz))
+			for k, v in pairs(wz.link_to) do
+				log.action("  link_to:   %s xcnt=%d", v.key, v.xcnt)
 			end
+			for k, v in pairs(wz.link_from) do
+				log.action("  link_from: %s xcnt=%d", v.key, v.xcnt)
+			end
+			--log.action("* link_to: %s", dump(wz.link_to))
+			--log.action("* link_from: %s", dump(wz.link_from))
+			--wz:split()
+			--local close_pos = wz:get_closest(upos)
+			--if close_pos ~= nil then
+			--	wayzone_utils.put_marker(close_pos, "target")
+			--end
 		end
 	end
 

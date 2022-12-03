@@ -76,7 +76,14 @@ local function get_node_drops(node_name)
 	end
 end
 
-
+--[[
+Discover the drops that a node can drop.
+Note that "minetest.get_node_drops(node, toolname)" returns the actual drops
+for a particular node+tool combo and won't necessarily return all listed drops.
+We do this by recursively scanning the "nodedef.drop" table for string values.
+The values are in the "serialized" ItemStack representation "<ident> [<amount>...]".
+We split the <ident> off the string at the first whitespace.
+]]
 local function my_get_drops(node_name)
 	local out_tab = {}
 	local function get_items_from_table(val)
@@ -88,7 +95,6 @@ local function my_get_drops(node_name)
 			out_tab[val] = true
 		elseif type(val) == "table" then
 			for k, v in pairs(val) do
-				--get_strings_from_table(k, out_tab)
 				get_items_from_table(v)
 			end
 		end
@@ -98,6 +104,7 @@ local function my_get_drops(node_name)
 	if nodedef and nodedef.drop then
 		get_items_from_table(nodedef.drop)
 	end
+	-- convert the table keys to a list
 	local out_list = {}
 	for k, _ in pairs(out_tab) do
 		table.insert(out_list, k)
@@ -105,7 +112,37 @@ local function my_get_drops(node_name)
 	return out_list
 end
 
+local did_tool_log = false
+
+local function do_tool_log()
+	local axes = {}
+	for name, def in pairs(minetest.registered_tools) do
+		if def.tool_capabilities and
+			def.tool_capabilities.groupcaps and
+			def.tool_capabilities.groupcaps.choppy
+		then
+			log.action("name: %s %s", name, dump(def))
+
+			axes[name] = def
+		end
+	end
+	for name, def in pairs(axes) do
+		log.action("axe: %s", name)
+		log.action("craft: %s", dump(minetest.get_all_craft_recipes(name)))
+	end
+
+	--for name, def in pairs(minetest.registered_craftitems) do
+	--	log.action("CraftItem: %s %s", name, dump(def))
+	--end
+
+	--log.action("Minetest: %s", dump(minetest.get_all_craft_recipes()))
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
+	if not did_tool_log then
+		do_tool_log()
+		did_tool_log = true
+	end
 	log_player_pos(user)
 
 	if (pointed_thing.type == "node") then
@@ -117,6 +154,16 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		if not is_use then
 			wayzone_utils.log_table("query_tool: node def", nodedef)
 			log.action("drop: %s", dump(func.get_possible_drops(node.name)))
+			local md = minetest.get_meta(pos)
+			if md then
+				local mt = md:to_table()
+				if next(mt.fields) then
+					log.action("meta.fields: %s", dump(mt.fields))
+				end
+				if next(mt.inventory) then
+					log.action("meta.inventory: %s", dump(mt.inventory))
+				end
+			end
 		end
 		if minetest.get_item_group(node.name, "tree") > 0 then
 			local ret, trunk_pos, leave_pos = tree_scan.check_tree(pos)
