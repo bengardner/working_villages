@@ -488,6 +488,41 @@ local function wayzone_est_cost(s_cpos, d_cpos)
 end
 
 --[[
+Refresh all chunks that might connect to this wayzone.
+We already refreshed the chunk that contains this wayzone, so any 'exited'
+fields should be accurate.
+This is done is two passes:
+ - refresh chunks
+ - link chunks
+]]
+function wayzone_store:refresh_links_around(wz)
+	local adj_hash_pos = {}
+	local adj_hash = {}
+
+	local wzc = self:chunk_get_by_hash(wz.chash)
+
+	-- refresh all adjacent chunks, which handles the 'dirty' state
+	for aidx, avec in pairs(wz.exited) do
+		local n_cpos = vector.add(wz.cpos, wayzone.chunk_adjacent[aidx])
+		local n_chash = minetest.hash_node_position(n_cpos)
+		adj_hash_pos[aidx] = n_chash
+		self:chunk_get_by_hash(n_chash)
+	end
+
+	-- refresh links
+	for aidx, _ in pairs(wz.exited) do
+		local n_chash = adj_hash_pos[aidx]
+		local n_wzd = self:chunk_get_by_hash(n_chash)
+		if n_wzd ~= nil then
+			wayzones_refresh_links(wzc, n_wzd)
+			wayzones_refresh_links(n_wzd, wzc)
+			adj_hash[n_chash] = n_wzd
+		end
+	end
+	return adj_hash
+end
+
+--[[
 Find a series of wayzones that contain a path from start_pos to target_pos.
 FIXME: The cost estimate calculation sucks. This will not get an optimal path.
        It gets fairly close, though.
@@ -720,28 +755,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			           xx.gCost, xx.hCost, xx.gCost + xx.hCost, minetest.pos_to_string(xx.cur.spos))
 
 			-- iterate over the adjacent chunks, refresh links with this chunk
-			local adj_hash = {}
-			local adj_hash_pos = {}
-
-			-- refresh all adjacent chunks, which handles the 'dirty' state
-			for aidx, avec in pairs(wayzone.chunk_adjacent) do
-				local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
-				local n_chash = minetest.hash_node_position(n_cpos)
-				adj_hash_pos[aidx] = n_chash
-				self:chunk_get_by_hash(n_chash)
-			end
-
-			-- iterate over the exit groups and refresh links
-			-- NOTE: the presense of an exit node indicates a link to the neighbor
-			for aidx, _ in pairs(xx_wz.exited) do
-				local n_chash = adj_hash_pos[aidx]
-				local n_wzd = self:chunk_get_by_hash(n_chash)
-				if n_wzd ~= nil then
-					wayzones_refresh_links(xx_wzc, n_wzd)
-					wayzones_refresh_links(n_wzd, xx_wzc)
-					adj_hash[n_chash] = n_wzd
-				end
-			end
+			local adj_hash = self:refresh_links_around(xx_wz)
 
 			local link_tab
 			if is_fwd then
@@ -819,19 +833,7 @@ function wayzone_store:chunk_search(start_pos, max_distance)
 			local xx_wz = xx_wzc[xx.cur.index]
 
 			-- iterate over the adjacent chunks, refresh links with this chunk
-			local adj_hash = {}
-			for aidx, exited in pairs(xx_wz.exited) do
-				if aidx ~= 1 then
-					local n_cpos = vector.add(xx.cur.pos, wayzone.chunk_adjacent[aidx])
-					local n_chash = minetest.hash_node_position(n_cpos)
-					local n_wzd = self:chunk_get_by_hash(n_chash)
-					if n_wzd ~= nil then
-						wayzones_refresh_links(xx_wzc, n_wzd)
-						wayzones_refresh_links(n_wzd, xx_wzc)
-						adj_hash[n_chash] = n_wzd
-					end
-				end
-			end
+			local adj_hash = self:refresh_links_around(xx_wz)
 
 			-- add new walkers that are not out of range
 			local link_tab = xx_wz.link_to

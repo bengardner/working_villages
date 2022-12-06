@@ -138,7 +138,7 @@ do
 	--		local luaentity = obj:get_luaentity()
 	--
 	--		if working_villages.is_villager(luaentity.name) then
-	--			local stack = luaentity:get_wield_item_stack()
+	--			local stack = luaentity:get_wielded_item()
 	--
 	--			if stack:get_name() ~= self.itemname then
 	--				log.warning("changed wield itemname from %s to %s", self.itemname, stack:get_name())
@@ -162,7 +162,7 @@ do
 		-- get the villager. the villager on_deactivate() removes this object
 		local ent = self.object:get_attach():get_luaentity()
 		local wield_item = self.object:get_properties().wield_item
-		local wield_name = ent:get_wield_item_stack():get_name()
+		local wield_name = ent:get_wielded_item():get_name()
 		local is_visible = true
 		if wield_name == "" then
 			wield_name = "air"
@@ -192,11 +192,13 @@ end
 ---------------------------------------------------------------------
 
 working_villages.job_inv = minetest.create_detached_inventory("working_villages:job_inv", {
-	on_take = function(inv, listname, _, stack) --inv, listname, index, stack, player
-		inv:add_item(listname,stack)
+	on_take = function(inv, listname, listidx, stack) --inv, listname, index, stack, player
+		log.action("on_take %s %s", listname, stack:get_name())
+		inv:add_item(listname, stack)
 	end,
 
 	on_put = function(inv, listname, _, stack)
+		log.action("on_put %s %s", listname, stack:get_name())
 		if inv:contains_item(listname, stack:peek_item(1)) then
 			--inv:remove_item(listname, stack)
 			stack:clear()
@@ -483,7 +485,6 @@ function working_villages.register_villager(product_name, def)
 		local hand = minetest.add_entity(self.object:get_pos(), "working_villages:wield_entity")
 		hand:set_attach(self.object, "Arm_Right", {x=0, y=5.5, z=3}, {x=-90, y=225, z=90}, true)
 		--hand:set_properties({visual_size={x=0.25,y=0.25}})
-		self.hand = hand
 
 		working_villages.active_villagers[self.inventory_name] = self
 		self.sensefunc = sensors()
@@ -552,8 +553,9 @@ function working_villages.register_villager(product_name, def)
 
 	local function on_deactivate(self, removal)
 		log.warning("deactivate %s removal=%s", self.inventory_name, tostring(removal))
-		if self.hand then
-			self.hand:remove()
+
+		for _, obj in ipairs(self.object:get_children()) do
+			obj:remove()
 		end
 		working_villages.active_villagers[self.inventory_name] = nil
 	end

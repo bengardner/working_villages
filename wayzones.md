@@ -807,3 +807,69 @@ But if I did try to use outter edges... I could do this AFTER determining the wa
 
 
 
+# Data Storage that could be part of minetest C++
+
+## Area or Region
+
+This describes a set of nodes, with specialization for certain shapes.
+
+For example, add_box() does not iterate over all the positions in the box and call add_position(), but rather consists of a type "box" and the fields minp/maxp.
+The inside, outside and iter() functions test using the minp/maxp fields.
+
+Construction:
+
+  * new() -- create an empty area
+  * new_sphere(pos, radius) -- new() + add_sphere()
+  * new_box(minp, maxp)
+  * new_cylinder(pos, radius, height)
+
+Construction Methods:
+
+  * add_position(pos)                 -- add a single node position to the set
+  * add_sphere(pos, radius)           -- add a sphere
+  * add_box(minp, maxps)              -- add a box
+  * add_cylinder(pos, radius, height) -- add a cylinder
+
+Test/use Methods:
+
+  * inside(pos) -- returns true if the position is inside the shape
+  * outside(pos) -- returns not inside(pos)
+  * iter() -- iterate over positions in the shape
+
+Properties:
+
+  * minp - the minimum position in the store
+  * maxp - the maximum position in the store
+  * count - the number of positions in the store
+
+## Node Position Store -- Boolean
+
+Methods:
+
+  * new(size)
+
+Creates a new, empty store. Size is optional and allows for specialization. (8x8x8 = 64 bytes, 16x16x16=512 bytes)
+
+  * add(position)
+
+Adds a position to the set. If out of bounds previously set, returns false. Otherwise returns true.
+
+  * finalize()
+
+Indicates that add() will not be called again. Allows optimization (lua -> table containing position hashes to bit array).
+The position store may have sub-stores that box clusters.
+
+  * inside(position)
+
+Tests is the position is inside or outside of the store. Returns true if inside.
+
+  * outside(position)
+
+not inside(pos). Probably not needed.
+
+Properties:
+
+  * minp - the minimum position in the store
+  * maxp - the maximum position in the store
+  * count - the number of positions in the store
+

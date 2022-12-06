@@ -28,6 +28,27 @@ function villager:get_inventory()
 	}
 end
 
+-- Same as object:get_wield_list()
+function villager:get_wield_list()
+	return "wield_item"
+end
+
+-- Same as object:get_wield_index()
+function villager:get_wield_index()
+	return 1
+end
+
+-- Same as object:get_wielded_item()
+function villager:get_wielded_item()
+	return self:get_inventory():get_stack("wield_item", 1)
+end
+
+-- Same as object:set_wielded_item(item)
+function villager:set_wielded_item(item)
+	self:get_inventory():set_stack("wield_item", 1, item)
+	return true
+end
+
 --[[
 Add up all the inventory items by group for the list of groups.
 For example, the woodcutter would want { "tree", "sapling" } to see if
@@ -74,9 +95,9 @@ function villager:count_inventory_items(items)
 	local item_cnt = {}
 	for _, stack in pairs(inv:get_lists()) do
 		for _, istack in ipairs(stack) do
-			local node_name = istack:get_name()
-			if items[node_name] ~= nil then
-				item_cnt[node_name] = (item_cnt[node_name] or 0) + istack:get_count()
+			local name = istack:get_name()
+			if items[name] ~= nil then
+				item_cnt[name] = (item_cnt[name] or 0) + istack:get_count()
 			end
 		end
 	end
@@ -323,18 +344,6 @@ function villager:set_yaw_by_direction(direction)
 	self.object:set_yaw(math.atan2(direction.z, direction.x) - math.pi / 2)
 end
 
--- villager.get_wield_item_stack returns the villager's wield item's stack.
-function villager:get_wield_item_stack()
-	local inv = self:get_inventory()
-	return inv:get_stack("wield_item", 1)
-end
-
--- villager.set_wield_item_stack sets villager's wield item stack.
-function villager:set_wield_item_stack(stack)
-	local inv = self:get_inventory()
-	inv:set_stack("wield_item", 1, stack)
-end
-
 -- villager.add_item_to_main add item to main slot.
 -- and returns leftover.
 function villager:add_item_to_main(stack)
@@ -342,7 +351,7 @@ function villager:add_item_to_main(stack)
 	return inv:add_item("main", stack)
 end
 
-function villager:replace_item_from_main(rstack,astack)
+function villager:replace_item_from_main(rstack, astack)
 	local inv = self:get_inventory()
 	inv:remove_item("main", rstack)
 	inv:add_item("main", astack)
@@ -371,8 +380,10 @@ end
 function villager:move_wield_to_main()
 	local inv = self:get_inventory()
 	local wield_stack = inv:get_stack("wield_item", 1)
-	inv:add_item("main", wield_stack)
-	inv:set_stack("wield_item", 1, ItemStack())
+	if wield_stack:get_name() ~= "" then
+		inv:add_item("main", wield_stack)
+		inv:set_stack("wield_item", 1, ItemStack())
+	end
 end
 
 -- villager.has_item_in_main reports whether the villager has item.
@@ -396,37 +407,66 @@ There are a few damage groups: crumbly, cracky, choppy, fleshy, and snappy.
 And there is "oddly_breakable_by_hand".
 
 But we are going with brute force here.
+@return whether the wielded item changed, info {diggable, time, wear}
 ]]
 function villager:wield_best_for_dig(node_name)
 	local nodedef = minetest.registered_nodes[node_name]
 	local inv = self:get_inventory()
+	local old_wield = inv:get_stack("wield_item", 1):get_name()
 
 	-- TODO: remember the previous results and use the same tool
+	-- memory.dig_tool[node][tool] = gametime
+
+	local istack_none = ItemStack()
+	local hand = minetest.get_tool_capabilities
 
 	local best = {}
-	for _, stack in pairs(inv:get_lists()) do
-		-- We only need to scan wield_item and main (not job), but whatever
-		for _, istack in ipairs(stack) do
-			local name = istack:get_name()
+	local function check_tool(istack, skip_tool_check)
+		local name = istack:get_name()
+		--log.action("check_tool %s", name)
+		if not skip_tool_check then
 			local tool = minetest.registered_tools[name]
-			if tool and tool.tool_capabilities then
-				log.action("check %s", dump(tool))
-				local ii = minetest.get_dig_params(nodedef.groups, tool.tool_capabilities)
-				if ii.diggable and best.time == nil or best.time > ii.time then
-					best.tool = name
-					best.time = ii.time
-					best.istack = istack
-				end
+			if not (tool and tool.tool_capabilities) then
+				return
+			end
+		end
+		local ii = minetest.get_dig_params(nodedef.groups, istack:get_tool_capabilities())
+		if ii.diggable and best.time == nil or best.time > ii.time then
+			best.name = istack:get_name()
+			best.istack = istack
+			best.time = ii.time
+			best.wear = ii.wear
+		end
+	end
+
+	for _, stack in pairs(inv:get_lists()) do
+		-- We only need to scan "wield_item" and "main" (not job), but whatever
+		for _, istack in ipairs(stack) do
+			if istack:get_name() ~= "" then
+				check_tool(istack, false)
 			end
 		end
 	end
+	-- try using the hand
 	if best.istack == nil then
-		log.action("%s: wielding my fist", self.inventory_name)
-		self:move_wield_to_main()
-	else
-		log.action("%s: wielding %s", self.inventory_name, best.tool)
-		self:move_main_to_wield(function (name) return name == best.tool end)
+		check_tool(ItemStack())
 	end
+
+	local changed = false
+	if best.istack == nil or best.name == "" then
+		log.action("%s: wielding my fist", self.inventory_name)
+		if old_wield ~= "" then
+			self:move_wield_to_main()
+			changed = true
+		end
+	else
+		log.action("%s: wielding %s", self.inventory_name, best.name)
+		if best.tool ~= old_wield then
+			self:move_main_to_wield(function (name) return name == best.name end)
+			changed = true
+		end
+	end
+	return changed, best
 end
 
 -- villager.is_named reports the villager is still named.
@@ -726,27 +766,6 @@ function villager:set_job_data(key, value)
 	actual_job_data[key] = value
 end
 
--- villager.is_active check if the villager is paused.
--- deprecated check self.pause instesad
-function villager:is_active()
-	print("self:is_active is deprecated: check self.pause directly it's a boolean value")
-	--return self.pause == "active"
-	return self.pause
-end
-
---villager.set_paused set the villager to paused state
---deprecated use set_pause
-function villager:set_paused(reason)
-	print("self:set_paused() is deprecated use self:set_pause() and self:set_displayed_action() instead")
---[[
-	self.pause = "resting"
-	self.object:set_velocity{x = 0, y = 0, z = 0}
-	self:set_animation(working_villages.animation_frames.STAND)
-]]
-	self:set_pause(true)
-	self:set_displayed_action(reason or "resting")
-end
-
 -- compatibility with like player object
 function villager:get_player_name()
 	return self.object:get_player_name()
@@ -756,38 +775,13 @@ function villager:is_player()
 	return false
 end
 
-function villager:get_wield_index()
-	return 1
-end
-
---deprecated
-function villager:set_state(id)
-	if id == "idle" then
-		print("the idle state is deprecated")
-	elseif id == "goto_dest" then
-		print("use self:go_to(pos) instead of self:set_state(\"goto\")")
-		self:go_to(self.destination)
-	elseif id == "job" then
-		print("the job state is not nessecary anymore")
-	elseif id == "dig_target" then
-		print("use self:dig(pos,collect_drops) instead of self:set_state(\"dig_target\")")
-		self:dig(self.target,true)
-	elseif id == "place_wield" then
-		print("use self:place(itemname,pos) instead of self:set_state(\"place_wield\")")
-		local wield_stack = self:get_wield_item_stack()
-		self:place(wield_stack:get_name(),self.target)
-	end
-end
-
 --------------------------------------------------------------------
 
 function villager:set_pause(state)
 	assert(type(state) == "boolean","pause state must be a boolean")
 	self.pause = state
 	if state then
-		self.object:set_velocity{x = 0, y = 0, z = 0}
-		--perhaps check what animation we are in
-		self:set_animation(working_villages.animation_frames.STAND)
+		self:stand_still()
 	end
 end
 
@@ -1064,7 +1058,7 @@ end
 
 --------------------------------------------------------------------
 
--- Generic memory functions.
+-- Generic memory functions. (key=val)
 -- Stuff in memory is serialized, never try to remember objectrefs.
 function villager:remember(key, val)
 	self.memory[key]=val
@@ -1082,7 +1076,7 @@ end
 --[[ Remember a rough position, rounded to 8x8x8 node increment.
 8 was chosen because it is smaller than the search area (10) for villagers.
 Uses minetest.get_gametime() as the time.
-The stored layout is: memory[key] = { [pos_hash] = time, ... }
+The stored layout is: memory[key][pos_hash] = time
 ]]
 function villager:remember_area(key, pos)
 	-- round to 8 node increments to reduce the size of the memory

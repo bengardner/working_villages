@@ -300,87 +300,76 @@ end
 local drop_range = {x = 2, y = 10, z = 2}
 
 function working_villages.villager:dig(pos,collect_drops,do_dist_check)
-	if func.is_protected(self, pos) then return false, fail.protected end
+	self:stand_still()
 
-	-- wield the right tool early
-	self:wield_best_for_dig(minetest.get_node(pos).name)
+	if func.is_protected(self, pos) then
+		return false, fail.protected
+	end
 
-	self.object:set_velocity{x = 0, y = 0, z = 0}
+	-- verify distance
 	local dist = vector.subtract(pos, self.object:get_pos())
 	if do_dist_check ~= false and vector.length(dist) > 5 then
-		self:set_animation(working_villages.animation_frames.STAND)
 		return false, fail.too_far
 	end
+
+	-- wield the best tool for the dig
+	local changed, wield = self:wield_best_for_dig(minetest.get_node(pos).name)
+	if changed then
+		--self.object:stand_still() -- FIXME: need something to update the animation?
+		self:delay_seconds(1)
+	end
+
+	-- start the 'mine' animation, facing the node
 	self:set_animation(working_villages.animation_frames.MINE)
 	self:set_yaw_by_direction(dist)
-	for _=0,30 do coroutine.yield() end --wait 30 steps
+
 	local destnode = minetest.get_node(pos)
-	--if not minetest.dig_node(pos) then --somehow this drops the items
-	-- return false, fail.dig_fail
-	--end
 	local def_node = minetest.registered_items[destnode.name];
-	local old_meta = nil;
-	if (def_node~=nil) and (def_node.after_dig_node~=nil) then
-		old_meta = minetest.get_meta(pos):to_table();
+
+	local dig_time = wield.time or 2
+	local dig_sound
+	local dug_sound
+	if def_node.sounds then
+		dig_sound = def_node.sounds.dig
+		dug_sound = def_node.sounds.dug
 	end
-	minetest.remove_node(pos)
-	local stacks = minetest.get_node_drops(destnode.name)
-	for _, stack in ipairs(stacks) do
-		local leftover = self:add_item_to_main(stack)
-		if not leftover:is_empty() then
-			minetest.add_item(pos, leftover)
+
+	-- play the digging sound during the animation
+	if dig_sound then
+		-- FIXME: how long are the sounds?
+		local sound_sec = 0.6
+		while dig_time > 0 do
+			minetest.sound_play(dig_sound, {object=self.object, max_hear_distance = 10}, true)
+			self:delay_seconds(sound_sec)
+			dig_time = dig_time - sound_sec
 		end
+	else
+		-- no dig sound, so just delay for the dig time
+		self:delay_seconds(dig_time)
 	end
-	if (old_meta) then
-		def_node.after_dig_node(pos, destnode, old_meta, nil)
+
+	-- Perform the default dig action, which transfers the drops to the inventory
+	local on_dig = def_node.on_dig or minetest.node_dig
+	if not on_dig(pos, destnode, self) then
+		return false, fail.dig_fail
 	end
-	for _, callback in ipairs(minetest.registered_on_dignodes) do
-		local pos_copy = {x=pos.x, y=pos.y, z=pos.z}
-		local node_copy = {name=destnode.name, param1=destnode.param1, param2=destnode.param2}
-		callback(pos_copy, node_copy, nil)
+
+	if dug_sound then
+		minetest.sound_play(dug_sound, {object=self.object, max_hear_distance = 10}, true)
 	end
-	local sounds = minetest.registered_nodes[destnode.name]
-	if sounds then
-		if sounds.sounds then
-			local sound = sounds.sounds.dug
-			if sound then
-				minetest.sound_play(sound,{object=self.object, max_hear_distance = 10})
-			end
-		end
-	end
-	self:set_animation(working_villages.animation_frames.STAND)
-	if collect_drops then
-		local mystacks = minetest.get_node_drops(destnode.name)
-		--perhaps simplify by just checking if the found item is one of the drops
-		for _, stack in ipairs(mystacks) do
-			local function is_drop(n)
-				local name
-				if type(n) == "table" then
-					name = n.name
-				else
-					name = n
-				end
-				if name == stack then
-					return true
-				end
-				return false
-			end
-			self:collect_nearest_item_by_condition(is_drop,drop_range)
-			-- add to inventory, when using remove_node
-			--[[local leftover = self:add_item_to_main(stack)
-			if not leftover:is_empty() then
-				minetest.add_item(pos, leftover)
-			end]]
-		end
-	end
+
+	-- stop the mine animation
+	self:stand_still()
 	return true
 end
 
-function working_villages.villager:place(item,pos)
-	if type(pos)~="table" then
+function working_villages.villager:place(item, pos)
+	if type(pos) ~= "table" then
 		error("no target position given")
 	end
-	if func.is_protected(self,pos) then return false, fail.protected end
+	if func.is_protected(self,pos) then
+		return false, fail.protected
+	end
 	local dist = vector.subtract(pos, self.object:get_pos())
 	if vector.length(dist) > 5 then
 		return false, fail.too_far
@@ -401,7 +390,7 @@ function working_villages.villager:place(item,pos)
 			error("no item to place given")
 		end
 	end
-	local wield_stack = self:get_wield_item_stack()
+	local wield_stack = self:get_wielded_item()
 	--move item to wield
 	if not (find_item(wield_stack:get_name()) or self:move_main_to_wield(find_item)) then
 		return false, fail.not_in_inventory
@@ -414,10 +403,11 @@ function working_villages.villager:place(item,pos)
 	end
 	--turn to target
 	self:set_yaw_by_direction(dist)
+	self:delay_seconds(1)
 	--wait 15 steps
-	for _=0,15 do coroutine.yield() end
+	--for _=0,15 do coroutine.yield() end
 	--get wielded item
-	local stack = self:get_wield_item_stack()
+	local stack = self:get_wielded_item()
 	--create pointed_thing facing upward
 	--TODO: support given pointed thing via function parameter
 	local pointed_thing = {
@@ -452,7 +442,7 @@ function working_villages.villager:place(item,pos)
 		end
 	end
 	--take item
-	self:set_wield_item_stack(stack)
+	self:set_wielded_item(stack)
 	coroutine.yield()
 	--handle sounds
 	local sounds = minetest.registered_nodes[itemname]

@@ -78,6 +78,23 @@ function wayzone_path.start(start_pos, target_pos, args)
 	return setmetatable(self, { __index = wayzone_path })
 end
 
+-- self is return from wayzone_path.start()
+local function add_double_linked_wz(self, wz_list)
+	local new_tab = {}
+	for _, wz in ipairs(wz_list) do
+		if wz then
+			self.ss:refresh_links_around(wz)
+			new_tab[wz.key] = wz
+			for k, v in pairs(wz.link_to) do
+				if wz.link_from[k] ~= nil and new_tab[k] == nil then
+					new_tab[k] = self.ss:wayzone_get_by_key(k)
+				end
+			end
+		end
+	end
+	return new_tab
+end
+
 -- grab the next position
 function wayzone_path:next_goal(mob_pos)
 	local cur_pos = self.last_goal or mob_pos
@@ -189,6 +206,7 @@ function wayzone_path:next_goal(mob_pos)
 	The 'target_pos' for pathfinder.find_path() is always the same.
 	We allow the current and next wayzone (if present) for the search space.
 	If there isn't a "next", then the dest is the original target_pos.
+	We also allow any double-linked wayzone next to the ones we traverse.
 	Otherwise, the "target" has inside() set to end when we hit the next wayzone.
 	In other words, the only places we can move are into the next wayzone OR
 	the final position in the same wayzone.
@@ -205,10 +223,10 @@ function wayzone_path:next_goal(mob_pos)
 		target_area = self.target_pos
 	end
 
-	-- bound the search area to the one or two wayzones
-	wayzone.outside_wz(target_area, { si.wz, next_wz })
-	--for _, wz in ipairs(target_area.wz_ok) do
-	--	log.action(" find_path wz_ok: %s", wz.key)
+	-- bound the search area to the one or two wayzones and surrounding area
+	wayzone.outside_wz(target_area, add_double_linked_wz(self, { si.wz, next_wz }))
+	--for _, wz in pairs(target_area.wz_ok) do
+	--	log.action(" find_path! wz_ok: %s", wz.key)
 	--end
 
 	-- find the path using the good old A* node pathfinder

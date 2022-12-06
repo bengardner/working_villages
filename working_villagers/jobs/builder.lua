@@ -70,7 +70,7 @@ If I have the materials of course. Also I'll look for building markers within a 
 				local function is_material(name)
 					return name == nname
 				end
-				local wield_stack = self:get_wield_item_stack()
+				local wield_stack = self:get_wielded_item()
 				if nname:find("beds:") and nname:find("_top") then
 					local inv = self:get_inventory()
 					if inv:room_for_item("main", ItemStack(nname)) then

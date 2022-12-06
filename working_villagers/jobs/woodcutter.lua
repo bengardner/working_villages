@@ -85,6 +85,7 @@ local function is_sapling_spot(pos)
 	end
 
 	-- A sapling needs room to grow. Require a volume of air around the spot.
+	-- REVISIT: replace with minetest.find_nodes_in_area() if that is faster?
 	for x = -2,2 do
 		for z = -2,2 do
 			for y = 0,3 do
@@ -141,7 +142,7 @@ end
 local function task_plant_saplings(self)
 	while true do
 		-- Do we have any saplings?
-		local wield_stack = self:get_wield_item_stack()
+		local wield_stack = self:get_wielded_item()
 		if not (is_sapling(wield_stack:get_name()) or self:has_item_in_main(is_sapling)) then
 			return true
 		end

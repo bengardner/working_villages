@@ -562,4 +562,15 @@ function func.get_possible_drops(node_name)
 	return out_list
 end
 
+function func.find_tools_by_group(group)
+	local tools = {}
+	for name, def in pairs(minetest.registered_tools) do
+		if def.groups and def.groups[group] then
+			table.insert(tools, name)
+		end
+	end
+	return tools
+end
+
+
 return func

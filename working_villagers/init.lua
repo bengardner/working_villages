@@ -37,8 +37,6 @@ working_villages.require("api")
 working_villages.require("register")
 working_villages.require("commanding_sceptre")
 
-working_villages.require("deprecated")
-
 working_villages.require("nav/pathfinder_tester")
 working_villages.require("nav/query_tool")
 working_villages.require("nav/waypoint_tool")

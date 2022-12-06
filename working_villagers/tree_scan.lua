@@ -15,7 +15,7 @@ If we have tree nodes AND we have leave nodes then it is a tree.
 If we have tree nodes AND NO leave nodes AND collidable nodes are at or below
 the base, then it is a tree.
 
-TODO: the woodcutter will call this when searching for a tree.
+The woodcutter calls this when searching for a tree.
 It will save the trunk and leave position tables.
 It will then go to the base of the tree and do the cutting action.
 If will randomly cut a leaves or tree node from the end of the lists until

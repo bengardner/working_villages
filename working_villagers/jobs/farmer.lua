@@ -1,10 +1,13 @@
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local tasks = working_villages.require("job_tasks")
+local wayzone_store = working_villages.require("nav/wayzone_store")
 
 -- limited support to two replant definitions
+-- if replane contains 0 items, it is harvested and not replanted.
 -- if replant contains 1 item, it is planted on soil_wet.
 -- if replant contains 2 items, the first is planted on soil_wet, the second on the first
+-- if replant is present, it is assumed that the scythe_mithril will work.
 local farming_plants = {
 	names = {
 		["farming:artichoke_5"]={replant={"farming:artichoke"}},
@@ -46,7 +49,7 @@ local farming_plants = {
 		["farming:wheat_8"]={replant={"farming:seed_wheat"}},
 		-- harvest, but no replant
 		["default:blueberry_bush_leaves_with_berries"]={},
-		-- haven't seen these, yet, but they should work like the default bush
+		["default:apple"]={},
 		["bushes:blackberry_bush"]={},
 		["bushes:blueberry_bush"]={},
 		["bushes:gooseberry_bush"]={},
@@ -55,10 +58,41 @@ local farming_plants = {
 	},
 }
 
+--[[ This is max desired inventory for each item, default=0.
+The farmer will adjust the inventory of each when visiting the chest.
+The inventory cannot hold all the various seeds, but the farmer should hold
+onto at least a few seeds for planting.
+]]
+local farming_demands = {
+	["farming:beanpole"] = 99,
+	["farming:trellis"] = 99,
+	["group:hoe"] = 2,
+	["farming:scythe_mithril"] = 1,
+}
+
+-- add pickups based on farming_demands
+local function farmer_add_pickups(pickups)
+	local new_fd = {}
+	for k, v in pairs(farming_demands) do
+		if string.sub(k, 1, 6) == "group:" then
+			for _, n in ipairs(func.find_tools_by_group(string.sub(k, 7))) do
+				pickups[n] = true
+				new_fd[n] = v
+			end
+		else
+			new_fd[k] = v
+			pickups[k] = true
+		end
+	end
+	farming_demands = new_fd
+end
+
 do
-	-- invert to get a list of all possible things the farmer can plant
+	-- invert to get a list of all possible things the farmer can plant and pickup
 	local seeds = {}
 	local pickups = {}
+
+	farmer_add_pickups(pickups)
 	for k, v in pairs(farming_plants.names) do
 		if v.replant ~= nil then
 			seeds[v.replant[1]] = "farming:soil_wet"
@@ -82,12 +116,6 @@ do
 	--log.warning("pickups: %s", dump(farming_plants.pickups))
 end
 
--- max desired inventory for each item, default=0
-local farming_demands = {
-	["farming:beanpole"] = 99,
-	["farming:trellis"] = 99,
-}
-
 function farming_plants.get_plant(item_name)
 	return farming_plants.names[item_name]
 
@@ -105,58 +133,35 @@ function farming_plants.is_seed(item_name)
 	return farming_plants.seeds[item_name] ~= nil
 end
 
+-- note used
 function farming_plants.is_plant(item_name)
-	local data = farming_plants.get_plant(item_name)
-	if (not data) then
-		return false;
-	end
-	return true;
+	return farming_plants.get_plant(item_name) ~= nil
 end
 
+-- test if the farmer should pick up item, which is a table ItemStack
 function farming_plants.is_pickup(item)
-	--log.action("is_pickup: %s=%s", dump(item.name), farming_plants.pickups[item.name] == true)
 	return farming_plants.pickups[item.name] == true
 end
 
+-- tests if this is something we know how to harvest
 local function find_harvest_node(pos)
 	local node = minetest.get_node(pos);
 	return farming_plants.get_plant(node.name) ~= nil
-	--local data = farming_plants.get_plant(node.name);
-	--if (not data) then
-	--	return false;
-	--end
-	--return true;
-end
-
--- Can plant in air above soil with light in a good range
-local function find_plant_node(pos)
-	-- the node has to be empty (air) -- FIXME: except for grapes and beans!
-	local node = minetest.get_node(pos);
-	if node.name ~= "air" then
-		return false
-	end
-	-- node below has to be soil level 3 or higher
-	local below = vector.new(pos.x, pos.y - 1, pos.z)
-	local below_node = minetest.get_node(below);
-	if minetest.get_item_group(below_node.name, "soil") < 3 then
-		return false
-	end
-	-- light level has to be high enough -- should check farming mod for limits
-	if minetest.get_node_light(pos) <= 12 then
-		return false
-	end
-	return true
 end
 
 local searching_range = {x = 10, y = 3, z = 10}
 
-local function put_func(_,stack)
+-- REVISIT: not used yet
+local function put_func(_, stack)
 	-- TODO: check if we have too many in the inventory
-	if farming_demands[stack:get_name()] then
+	local max_cnt = farming_demands[stack:get_name()]
+	if not max_cnt then
 		return false
 	end
-	return true;
+	return stack:get_count() <= max_cnt
 end
+
+-- REVISIT: not used yet
 local function take_func(villager,stack)
 	local item_name = stack:get_name()
 	if farming_demands[item_name] then
@@ -182,6 +187,10 @@ local function remember_farming_pos(self, pos)
 	self:remember_area("farming_pos", pos)
 end
 
+local function recall_farming_pos(self)
+	return self:recall_area("farming_pos")
+end
+
 -------------------------------------------------------------------------------
 
 local function task_plant_seeds(self)
@@ -195,6 +204,8 @@ local function task_plant_seeds(self)
 		end
 		--log.action("can plant: %s", dump(item_cnts))
 
+		-- collect the node names that we can plant on depending on the seeds.
+		-- "soil_wet", "farming:trellis", "farming:beanpole"
 		local node_names = {}
 		for n, c in pairs(item_cnts) do
 			local ss = farming_plants.seeds[n]
@@ -212,6 +223,7 @@ local function task_plant_seeds(self)
 
 		-- check for planting nodes
 		local my_pos = vector.round(self.object:get_pos())
+		-- revisit: use searching_range??
 		local minp = vector.new(my_pos.x - 10, my_pos.y - 5, my_pos.z - 10)
 		local maxp = vector.new(my_pos.x + 10, my_pos.y + 5, my_pos.z + 10)
 		local grp_pos = {}
@@ -224,14 +236,18 @@ local function task_plant_seeds(self)
 		end
 		--log.action("find_nodes_in_area_under_air: %s", dump(grp_pos))
 
+		-- iterate over the target planting nodes (soil/trellis/beanpole)
 		for tgt_name, pos_list in pairs(grp_pos) do
 			local inv_set = node_names[tgt_name]
-			local seed_to_plant = inv_set[math.random(#inv_set)]
 			local target = vector.add(pos_list[1], {x=0,y=1,z=0})
+
+			-- randomly pick a seed to plant
+			-- FIXME: We should check which plants are nearby and try to match.
+			local seed_to_plant = inv_set[math.random(#inv_set)]
 
 			log.action("plant seed %s seed_to_plant @ %s", seed_to_plant, minetest.pos_to_string(target))
 			self:set_displayed_action(string.format("planting %s", seed_to_plant))
-			self:go_to(target,2)
+			self:go_to(target, 1)
 			self:stand_still()
 			local success, ret = self:place(seed_to_plant, target)
 			self:stand_still()
@@ -254,6 +270,9 @@ local function task_plant_seeds(self)
 end
 working_villages.register_task("plant_seeds", { func = task_plant_seeds, priority = 35 })
 
+--[[ This task will harvest and then replant.
+It is assumed that the harvesting will drop a seed, so we shouldn't run out.
+]]
 local function task_harvest_and_plant(self)
 	while true do
 		-- Do we have a spot to plant?
@@ -289,10 +308,41 @@ local function task_harvest_and_plant(self)
 				self:place(value, vector.add(target, vector.new(0,index-1,0)))
 			end
 		end
+		self:stand_still()
 		self:delay_seconds(2)
 	end
 end
-working_villages.register_task("harvest_and_plant", { func = task_harvest_and_plant, priority = 35 })
+working_villages.register_task("harvest_and_plant", { func = task_harvest_and_plant, priority = 40 })
+
+--[[
+This task cycles through recent job sites.
+We should visit each once a day. This will just visit the oldest to the
+newest.
+]]
+local function task_visit_job_sites(self)
+	local job_sites = recall_farming_pos(self)
+
+	-- Iterate over all job sites and wait after each goto to allow the
+	-- scan to pick up harvest tasks.
+	for _, info in ipairs(job_sites) do
+		log.warning("jobsite: %s", dump(info))
+		local ss = wayzone_store.get()
+		local wzc = ss:chunk_get_by_pos(info.pos)
+
+		for _, wz in ipairs(wzc) do
+			local target = wz:get_center_pos()
+			log.action("%s: check jobsite at %s", self.inventory_name, target)
+			local ret, msg = self:go_to(target, 4)
+			if ret == true then
+				-- wait long enough for the scan to run at least once
+				self:delay_seconds(10)
+			end
+		end
+	end
+	-- nothing to do...
+	return true
+end
+working_villages.register_task("visit_job_sites", { func = task_visit_job_sites, priority = 30 })
 
 -------------------------------------------------------------------------------
 
@@ -302,12 +352,14 @@ local function check_farmer(self, start_work, stop_work)
 		self:task_del("harvest_and_plant", "done working")
 		self:task_del("plant_seeds", "done working")
 		self:task_del("gather_items", "done working")
+		self:task_del("visit_job_sites", "done working")
 		return
 	end
 
 	-- check work tasks every 5 seconds
 	if start_work and func.timer(self, 5) then
 		log.action("%s: farmer scan", self.inventory_name)
+
 		-- can we gather farming stuff?
 		local items = self:get_nearby_objects_by_condition(farming_plants.is_pickup)
 		if #items > 0 then
@@ -315,44 +367,14 @@ local function check_farmer(self, start_work, stop_work)
 			for _, item in ipairs(items) do
 				table.insert(self.task_data.gather_items, item)
 			end
-			self:task_add("gather_items")
-		else
-			log.action("%s: farmer didn't find any pickups", self.inventory_name)
+			-- gather stuff is higher than harvest
+			self:task_add("gather_items", 45)
 		end
 
-		---- check for soil nodes
-		--local my_pos = vector.round(self.object:get_pos())
-		--local minp = vector.new(my_pos.x - 10, my_pos.y - 5, my_pos.z - 10)
-		--local maxp = vector.new(my_pos.x + 10, my_pos.y + 5, my_pos.z + 10)
-		---- these are the 3 things we can plant on
-		--local nnam = { "farming:soil_wet", "farming:trellis", "farming:beanpole" }
-		--local grp_pos = {}
-		--for _, npos in ipairs(minetest.find_nodes_in_area_under_air(minp, maxp, nnam)) do
-		--	local nn = minetest.get_node(npos).name
-		--	if grp_pos[nn] == nil then
-		--		grp_pos[nn] = {}
-		--	end
-		--	table.insert(grp_pos[nn], npos)
-		--end
-		--log.action("find_nodes_in_area_under_air: %s", dump(grp_pos))
+		self:task_add("plant_seeds") -- exits quick, lower than harvest/gather
+		self:task_add("visit_job_sites") -- lower priority
 
-		---- see if we can plant something
-		--local item_cnts = self:count_inventory_items(farming_plants.seeds)
-		--if next(item_cnts) ~= nil then
-		--	-- We can plant something
-		--	local target = func.search_surrounding(self.object:get_pos(), find_plant_node, searching_range)
-		--	if target ~= nil then
-		--		self.task_data.plant_pos = target
-		--		self:task_add("plant_seeds")
-		--	else
-		--		log.action("%s: farmer didn't find a plant spot", self.inventory_name)
-		--	end
-		--else
-		--	log.action("%s: farmer doesn't have seeds", self.inventory_name)
-		--end
-		self:task_add("plant_seeds")
-
-		-- see if we can harvest anything
+		-- See if we can harvest anything
 		local target = func.search_surrounding(self.object:get_pos(), find_harvest_node, searching_range)
 		if target ~= nil then
 			self.task_data.harvest_pos = target

@@ -543,9 +543,9 @@ function wayzone:exited_to(wz_other, max_count)
 			end
 		end
 	end
-	if count == 0 and pcnt > 0 then
-		log.warning("exited_to: no hit for %s -> %s  pcnt=%d", self.key, wz_other.key, pcnt)
-	end
+	--if count == 0 and pcnt > 0 then
+	--	log.action("exited_to: no hit for %s -> %s  pcnt=%d", self.key, wz_other.key, pcnt)
+	--end
 
 	return count
 end
@@ -779,7 +779,7 @@ function wayzone.outside_wz(target_area, allowed_wz)
 
 	-- add the wayzones to the list
 	if allowed_wz ~= nil and type(allowed_wz) == "table" then
-		for _, wz in ipairs(allowed_wz) do
+		for _, wz in pairs(allowed_wz) do
 			if wz ~= nil then
 				table.insert(target_area.wz_ok, wz)
 			end
