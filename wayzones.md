@@ -816,6 +816,13 @@ This describes a set of nodes, with specialization for certain shapes.
 For example, add_box() does not iterate over all the positions in the box and call add_position(), but rather consists of a type "box" and the fields minp/maxp.
 The inside, outside and iter() functions test using the minp/maxp fields.
 
+The region types are:
+
+  * positions (table of hashes or one or more bit arrays)
+  * box (minp, maxp)
+  * sphere (pos, radius)
+  * cylinder (pos, radius, height. pos is at the center bottom of the  cylinder)
+
 Construction:
 
   * new() -- create an empty area
@@ -840,7 +847,7 @@ Properties:
 
   * minp - the minimum position in the store
   * maxp - the maximum position in the store
-  * count - the number of positions in the store
+  * count - the number of positions in the store (needed? or only for "pos" type?)
 
 ## Node Position Store -- Boolean
 

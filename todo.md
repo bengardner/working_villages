@@ -101,12 +101,89 @@ Use that as the destination instead of the desired destination.
 Keep the radius, so that we may end up in another nearby node.
 
 
+### Looser wayzone limits
+
+Already done, but when computing the A* path, allow any wayzone that is doubly-linked to a wayzone that we pass through.
+
+This makes the path look pretty good. It also allows passing through a neighboring wayzone when the start and dest are in the same wayzone.
+
+
 ### Rename the whole thing NavigationManager
 
 wayzone_store => navigation_manager
 
 nm = navigation_manager.new(args)
 
+Methods:
+
+Wayzone:
+
+Class Items:
+
+  * chunk_size = 8
+  * chunk_adjacent[] -- offsets to the 15 adjacent chunks, including self at 1
+  * outsize_wz(target, allowed_wz) -- add "outside" method to check list of allowed_wz
+  * normalize_pos(pos)
+  * key_encode(chash, index)
+  * key_encode_pos(cpos, index)
+  * key_decode(key)
+  * key_decode_pos(key)
+  * new(cpos, index)
+
+Instance Items:
+
+  * pos_to_lpos(pos) -- convert a global position to a local position
+  * lpos_to_pos(pos) -- convert a local position to a global position
+  * insert_exit(pos) -- add a global exit position
+  * insert(pos)      -- add a global position to the wayzone
+  * finish()         -- indicate that we are done with insert()
+  * inside_local(lpos) -- check if a local position is inside the wayzone
+  * inside(pos)      -- check if a global position is inside the wayzone
+  * exited_to(wz_other, max_count)
+  * iter_exited(adjacent_cpos)
+  * iter_visited()
+  * get_center_pos()
+  * get_closest(ref_pos)
+  * get_dest(target_pos)
+  * link_add_to(to_wz, xcnt)
+  * link_add_from(from_wz, xcnt)
+  * link_test_to(to_wz)
+  * link_test_from(from_wz)
+  * link_del(other_chash) -- not used
+
+Wayzone_Chunk:
+
+  * new(cpos)                -- create a new wayzone_chunk, which will need to be populated
+  * new_wayzone()            -- create a new wayzone, which will need to be populated
+  * get_wayzone_for_pos(pos) -- find a wayzone whose inside() returns true
+  * get_wayzone_by_key(key)  -- get the wayzone by key (extracts the index and returns that)
+  * gen_is_current(other)    -- check if we have the current gen for the other chunk
+  * gen_update(other)        -- update our copy of the current gen for the other chunk
+  * mark_used()  -- note that we used the chunk
+  * mark_dirty() -- mark as dirty
+  * is_dirty()   -- check if dirty and needs rebuild
+
+Wayzone_Store:
+
+  * chunk_get_pos(pos)
+  * chunk_get_by_pos(pos, no_load)
+  * chunk_get_by_hash(hash, no_load)
+  * chunk_dirty(cpos)
+  * wayzone_get_by_key(key)
+  * get_wayzone_for_pos(pos) -- find a wayzone that contains the position
+  * find_standable_near(target, radius, start_pos)
+  * find_standable_y(pos, up_y, down_y)
+  * is_reachable(start_pos, target_pos)
+  * round_position(pos)  -- move to pathfinder?
+  * refresh_links_around(wz)
+  * refresh_links(wzc1, wzc2)
+  * find_path(start_pos, target_pos)
+  * get_pos_info(pos, where)
+
+Wayzone_Pathfinder:
+
+  * wayzone_path.start(start_pos, target_pos, args)
+  * wayzone_path:next_goal(cur_pos)
 
 ### Improve Tree Cutter Tree Selection
 
@@ -129,7 +206,7 @@ Uses the same logic as the stand-pos scan in process_chunk()?
   b3=climbable     (in node)
   b4=door          (in node)
 
-Later, after it is all working...
+Later, after it is all working... maybe.
 
 
 
@@ -150,7 +227,7 @@ The logic() function is supposed to add the appropriate tasks to the queue.
 I'm thinking it would add it by name so that we can easily add/remove a task.
 
 For example, it adds "goto_bed" if it is nighttime and removes it during the day.
-The goto_bed() task will yield until 
+The goto_bed() task will yield until morning.
 
 Unlike mobkit, there is no low queue.
 A task is added to a sorted list.
@@ -310,6 +387,63 @@ Other stuff:
     * where do coins come from??
 
 
+# AI: schedule
+
+Add a series of time slots that set or clear a variable based on the activity that the NPC should be doing during that time period.
+
+There may be several schedules, based on the shift (for guards).
+
+Examples:
+
+  * sleep from 10 PM to 7 AM
+  * breakfast from 7 AM to 9 AM
+  * lunch from 12 AM to 2 PM
+  * dinner from 5 PM to 7 PM
+  * coordinate from 7 AM to 8 AM
+  * work from 8 AM to 5 PM
+  * break from 10 AM to 10:30 AM
+  * break from 3 PM to 4 PM
+  * school from 9 AM to 4 PM
+  * church from 9 AM to 10 AM
+  * socialize from 6 AM to 10 PM
+  * hometime from 9 PM to 10 PM
+
+The schedules can overlap. For example, the "breakfast" task would be complete for the day once breakfast has been eaten.
+
+Once breakfast is complete, other tasks could be active, such as socialize and work.
+
+A "completion" flag is maintained for each row, named after the schedule name. When the schedule is complete, the flags is set.
+```
+    self.job_data.complete['sleep'] = minetest.get_timeofday()
+```
+If the schedule is NOT active, then the data is cleared.
+```
+    self.job_data.complete['sleep'] = nil  -- or set to false?
+```
+
+The `check` function is called from on_step() if the job_data indicates the schedule is NOT complete. The check function is passed whether the schedule is active.
+It is called once more with active=false when out of schedule if it was called with active=true.
+```
+function check_sleep(self, name, active)
+
+Example:
+    check_sleep(self, "sleep", true)
+```
+
+Example row (using 24-hour clock instead of the 24-scaled to 1.0):
+```
+    { name, array_of_start_stop_times, done_variable, check_function }
+    { "sleep", { {0, 6}, {22, 24} }, "sleep", check_sleep }
+    { "breakfast", {8, 17}, "breakfast", check_breakfast }
+    { "work", {8, 17}, "work", check_work }
+```
+
+Have an assigned job for the day. Or maybe until done. The "work" 
+
+A table of entries is used to check various things.
+
+Tasks consist of a pair of check/task functions. Or maybe the check function i
+
 # AI: Farmer
 
 ## Done
@@ -319,9 +453,19 @@ Other stuff:
 
 ## Broken
 
-  * Replant after dig doesn't work
+  * ?
 
 ## ToDo
+
+### Farmer: Need to be next to node that we work on.
+
+Find a node adjacent to the node that we want to work on. Use the wayzone. Check N/S/E/W then diags.
+
+Or just move to that node with a radius of 2 (anywhere in the 9 nodes).
+
+
+
+
 
 ### Bonemeal/fertiliser
 
@@ -336,31 +480,17 @@ Collect and use
 
 # AI: Woodcutter
 
-Use the best axe possible (highest "choppy")
-
-```lua
-	local axes = {}
-	for name, def in pairs(minetest.registered_tools) do
-		if def.tool_capabilities and
-			def.tool_capabilities.groupcaps and
-			def.tool_capabilities.groupcaps.choppy
-		then
-			log.action("name: %s %s", name, dump(def))
-
-			axes[name] = def
-		end
-	end
-```
-
-Will need to figure out which axe to pick. I assume the lowest times for the typical tree would be best.
-Or may just pick any that has a high enough maxlevel for the tree.
-
-All trees except pine have choppy=2 and oddly_breakable_by_hand. pine has choppy=3.
-
-Probably need a "pick best tool" to dig a node. Possibly add as part of the generic "dig" function.
+Try to move under the tree node if it is above head level.
 
 
-# Graphics
 
-Want to show a villager holding something.
-So far, they are all empty handed.
+
+
+
+
+# broken
+
+register task circular include loop.
+
+ -- move register routines to one file
+ -- ??

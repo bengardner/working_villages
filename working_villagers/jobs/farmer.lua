@@ -191,6 +191,10 @@ local function recall_farming_pos(self)
 	return self:recall_area("farming_pos")
 end
 
+local function forget_farming_pos(self, pos)
+	return self:forget_area_pos("farming_pos", pos)
+end
+
 -------------------------------------------------------------------------------
 
 local function task_plant_seeds(self)
@@ -257,7 +261,7 @@ local function task_plant_seeds(self)
 				self:set_displayed_action("confused as to why planting failed")
 				self:delay_seconds(5)
 			else
-				remember_farming_pos(self, target)
+				remember_farming_pos(self, self.object:get_pos())
 				self:delay_seconds(2)
 				did_one = true
 			end
@@ -300,7 +304,7 @@ local function task_harvest_and_plant(self)
 		local plant_data = farming_plants.get_plant(node_name);
 		--log.action("digging node=%s @ %s", node_name, minetest.pos_to_string(target))
 		self:dig(target,true)
-		remember_farming_pos(self, target)
+		remember_farming_pos(self, self.object:get_pos())
 		if plant_data and plant_data.replant then
 			self:delay_seconds(1)
 			for index, value in ipairs(plant_data.replant) do
@@ -313,6 +317,110 @@ local function task_harvest_and_plant(self)
 	end
 end
 working_villages.register_task("harvest_and_plant", { func = task_harvest_and_plant, priority = 40 })
+
+-- test to see if the item is a hoe by checking for the 'hoe' group
+local function is_hoe(item)
+	local name = func.resolve_item_name(item)
+	if name and name ~= "" then
+		return minetest.get_item_group(name, "hoe") > 0
+	end
+	return false
+end
+
+--[[ Searches for soil under air that is within 3 nodes of water.
+So, find "group:soil" and
+
+"bucket:bucket_empty" => find water source to get water (between 2 water sources)
+"bucket:bucket_water" => can use in trenches in dirt to make farmland (need protection!)
+"bucket:bucket_river_water" => same as "bucket:bucket_water"
+
+1. Need something to designate farmland.
+Build something like this:
+ toooooooot
+ oXXXXXXXXo
+ oXXXXXXXXo
+ tXXwwwwXXt
+ oXXXXXXXXo
+ oXXXXXXXXo
+ toooooooot
+o=outline (cobblestone or log)
+t=torch over the outline
+X=dirt/dirt_wet/farmland
+w=water in trench (same level as dirt)
+]]
+local function task_farmer_till(self)
+	while true do
+		-- try to equip a hoe
+		self:move_main_to_wield(is_hoe)
+		local tool = self:get_wielded_item()
+		if not is_hoe(tool) then
+			-- need a hoe to till, so we are done
+			log.action("%s: no hoe, no till", self.inventory_name)
+			return true
+		end
+		--log.action("%s: farmer_till wielding %s", self.inventory_name, tool:get_name())
+
+		local my_pos = vector.round(self.object:get_pos())
+		local minp = vector.new(my_pos.x - 10, my_pos.y - 5, my_pos.z - 10)
+		local maxp = vector.new(my_pos.x + 10, my_pos.y + 5, my_pos.z + 10)
+		local nnam = { "group:water" }
+		local water_nodes = minetest.find_nodes_in_area_under_air(minp, maxp, nnam)
+
+		-- gather all the potential hoe spots
+		local checked_soil = {}
+		for _, wpos in ipairs(water_nodes) do
+			--log.action("water @ %s", minetest.pos_to_string(wpos))
+			minp = vector.offset(wpos, -2, 0, -2)
+			maxp = vector.offset(wpos, 2, 0, 2)
+			local dirt_nodes = minetest.find_nodes_in_area_under_air(minp, maxp, { "group:soil" })
+			for _, dpos in ipairs(dirt_nodes) do
+				local hash = minetest.hash_node_position(dpos)
+				if checked_soil[hash] == nil then
+					checked_soil[hash] = true
+				end
+			end
+		end
+
+		for hash, _ in pairs(checked_soil) do
+			local pos = minetest.get_position_from_hash(hash)
+			local node = minetest.get_node(pos)
+			if minetest.get_item_group(node.name, "soil") == 1 then
+				-- under is the soil node, above is the air above the soil
+				local pointed_thing = { type="node", above=vector.offset(pos, 0, 1, 0), under=pos }
+
+				log.action("%s: going to till %s @ %s with %s", self.inventory_name,
+					node.name, minetest.pos_to_string(pointed_thing.under), tool:get_name())
+
+				self:go_to(pointed_thing.above, 2)
+				self:stand_still()
+
+				-- node may have changed during go_to()
+				node = minetest.get_node(pos)
+				if minetest.get_item_group(node.name, "soil") == 1 then
+					-- tool may have changed during go_to() (via sceptre)
+					local tool_istack = self:get_wielded_item()
+					if is_hoe(tool_istack) then
+						local tool_def = minetest.registered_tools[tool_istack:get_name()]
+						log.action("%s: punching %s @ %s with %s", self.inventory_name,
+							node.name, minetest.pos_to_string(pointed_thing.under), tool_istack:get_name())
+
+						-- face the node and start the animation
+						local dist = vector.subtract(pos, self.object:get_pos())
+						self:set_animation(working_villages.animation_frames.MINE)
+						self:set_yaw_by_direction(dist)
+						self:delay_seconds(2)
+						-- call the on_use() method to do the deed
+						self:set_wielded_item(tool_def.on_use(self:get_wielded_item(), self, pointed_thing))
+						self:stand_still()
+						remember_farming_pos(self, pointed_thing.above)
+					end
+				end
+			end
+		end
+		return true
+	end
+end
+working_villages.register_task("farmer_till", { func = task_farmer_till, priority = 32 })
 
 --[[
 This task cycles through recent job sites.
@@ -329,6 +437,7 @@ local function task_visit_job_sites(self)
 		local ss = wayzone_store.get()
 		local wzc = ss:chunk_get_by_pos(info.pos)
 
+		local pos_valid = false
 		for _, wz in ipairs(wzc) do
 			local target = wz:get_center_pos()
 			log.action("%s: check jobsite at %s", self.inventory_name, target)
@@ -336,7 +445,11 @@ local function task_visit_job_sites(self)
 			if ret == true then
 				-- wait long enough for the scan to run at least once
 				self:delay_seconds(10)
+				pos_valid = true
 			end
+		end
+		if not pos_valid then
+			forget_farming_pos(self, info.pos)
 		end
 	end
 	-- nothing to do...
@@ -346,20 +459,25 @@ working_villages.register_task("visit_job_sites", { func = task_visit_job_sites,
 
 -------------------------------------------------------------------------------
 
-local function check_farmer(self, start_work, stop_work)
-	if stop_work then
+local function check_farmer(self, name, active)
+	log.action("%s: name=%s active=%s", self.inventory_name, name, tostring(active))
+	if not active then
 		log.action("%s: stopping work", self.inventory_name)
 		self:task_del("harvest_and_plant", "done working")
 		self:task_del("plant_seeds", "done working")
 		self:task_del("gather_items", "done working")
 		self:task_del("visit_job_sites", "done working")
+		self:task_del("farmer_till", "done working")
 		return
 	end
 
 	-- check work tasks every 5 seconds
-	if start_work and func.timer(self, 5) then
-		log.action("%s: farmer scan", self.inventory_name)
+	if func.timer(self, 5) then
+		self:task_add("farmer_till", 45)
+		self:task_add("plant_seeds", 50)
 
+		--log.action("%s: farmer scan", self.inventory_name)
+		--
 		-- can we gather farming stuff?
 		local items = self:get_nearby_objects_by_condition(farming_plants.is_pickup)
 		if #items > 0 then
@@ -413,7 +531,8 @@ working_villages.register_job("working_villages:job_farmer", {
 	description			= "farmer (working_villages)",
 	long_description = "I look for farming plants to collect and replant them.",
 	inventory_image	= "default_paper.png^working_villages_farmer.png",
-	logic = farmer_logic,
+	--logic = farmer_logic,
+	logic_check = check_farmer,
 })
 
 working_villages.farming_plants = farming_plants

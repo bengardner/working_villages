@@ -34,11 +34,6 @@ function func.nodeatpos(pos)
 	end
 end
 
--- vec components can be omitted e.g. vec={y=1}
-function func.pos_shift(pos, vec)
-	return vector.new(pos.x + (vec.x or 0), pos.y + (vec.y or 0), pos.z + (vec.z or 0))
-end
-
 -- thing can be luaentity or objectref.
 function func.get_stand_pos(thing)
 	local pos = {}
@@ -52,7 +47,7 @@ function func.get_stand_pos(thing)
 	else
 		return false
 	end
-	return func.pos_shift(pos,{y=colbox[2]+0.01}), pos
+	return vector.offset(pos, 0, colbox[2]+0.01, 0), pos
 end
 
 function func.get_box_height(thing)
@@ -572,5 +567,22 @@ function func.find_tools_by_group(group)
 	return tools
 end
 
+--[[
+Get the name of the item, which may be:
+ * a string: "default:cobblestone"
+ * an InvRef in table form: { name="default:cobblestone", count=1, ... }, uses item.name
+ * ItemStack : uses item:get_name()
+]]
+function func.resolve_item_name(item)
+	if type(item) == "string" then
+		return item
+	elseif type(item) == "table" then
+		if item.name then
+			return item.name
+		end
+	else
+		return item:get_name() -- assuming ItemStack
+	end
+end
 
 return func

@@ -810,6 +810,7 @@ end
 
 -------------------------------------------------------------------------------
 
+-- REVISIT: not used. not sure if useful.
 -- function that returns 1 chunk per call, in increasing distance
 -- up to the distance limit
 function wayzone_store:chunk_search(start_pos, max_distance)

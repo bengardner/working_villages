@@ -117,7 +117,7 @@ local function task_goto_bed(self)
 
 	if self.pos_data.home_pos == nil then
 		log.action("villager %s is waiting until dawn", self.inventory_name)
-		self:set_state_info("I'm waiting for dawn to come.")
+		self:set_state_info("I'm waiting for dawn to come.\nI am homeless.")
 		self:set_displayed_action("waiting until dawn")
 
 		-- find a nearby place to rest
@@ -158,11 +158,15 @@ local function task_goto_bed(self)
 			self:go_to(self.pos_data.bed_pos)
 			self:set_state_info("I am going to sleep soon.")
 			self:set_displayed_action("waiting for dusk")
+
+			-- wait until night time
+			-- FIXME: this should depend on the schedule
 			local tod = minetest.get_timeofday()
 			while (tod > 0.2 and tod < 0.805) do
 				coroutine.yield()
 				tod = minetest.get_timeofday()
 			end
+
 			self:sleep()
 			self:go_to(self.pos_data.home_pos)
 		end
@@ -171,6 +175,8 @@ local function task_goto_bed(self)
 end
 working_villages.register_task("goto_bed", { func = task_goto_bed, priority = 50 })
 
+-- go to self.destination as a lower priority task (why?)
+-- use self:go_to() to navigate from another task
 local function task_goto(self)
 	local target = self.destination
 	self.destination = nil
@@ -194,14 +200,70 @@ local function task_goto(self)
 end
 working_villages.register_task("goto", { func = task_goto, priority = 20 })
 
+-- waits for self.task_data.wait_seconds, which is not altered
 local function task_wait(self)
-	log.action("%s: I am waiting", self.inventory_name)
+	local sec_left = self.task_data.wait_seconds or 30
+	log.action("%s: I am waiting for %s seconds", self.inventory_name, sec_left)
 	self:set_displayed_action("waiting")
 	self:stand_still()
-	self:delay_seconds(30)
+	while sec_left > 0 do
+		local ds = math.max(1, sec_left)
+		self:delay_seconds(ds)
+		sec_left = sec_left - ds
+	end
 	return true
 end
 working_villages.register_task("wait", { func = task_wait, priority = 10 })
+
+-- waits for self.task_data.wait_seconds, which is not altered
+local function task_meal(self)
+	local meal_name
+	for _, xx in ipairs({"breakfast", "lunch", "dinner"}) do
+		if tasks.schedule_is_active(self, xx) then
+			meal_name = xx
+			break
+		end
+	end
+
+	if meal_name then
+		-- TODO: see if I have any food items and eat one or two
+
+		log.action("%s: I am eating %s", self.inventory_name, meal_name)
+		self:set_displayed_action(string.format("eating %s", meal_name))
+		self:stand_still()
+		self:delay_seconds(10)
+		tasks.schedule_done(self, meal_name)
+	end
+	return true
+end
+working_villages.register_task("meal", { func = task_meal, priority = 50 })
+
+-------------------------------------------------------------------------------
+
+function tasks.check_work(self, name, active)
+	local job = self:get_job()
+	--log.action("check_work: job=%s", dump(job))
+
+	if job and job.logic_check then
+		job.logic_check(self, name, active)
+	end
+end
+
+function tasks.check_school(self, name, active)
+end
+
+function tasks.check_social(self, name, active)
+	-- check for other NPCs around that we haven't visited with in the last
+	-- few hours
+	-- if found AND the other NPC's priority is low enough, add the "socialize"
+	-- task to BOTH NPCs and set the self.task_data.social_target
+end
+
+function tasks.check_hometime(self, name, active)
+end
+
+function tasks.check_church(self, name, active)
+end
 
 -------------------------------------------------------------------------------
 
@@ -211,6 +273,19 @@ If @name is set and the schedule is active, the name will be included in the
 key-val table returned from this function.
 If @task is set, this will add or remove the task based on the schedule.
 @priority is optional and is passed to self:task_add()
+
+Schedule names:
+ - sleep : head to the bed, sleep in bed or on the ground
+ - socialize : head to tavern (evening?)
+ - coordinate : morning, go to the town center to get job for day, tools
+ - work : do whatever (farmer, woodcutter, etc)
+ - breakfast : eat at table in home or at tavern
+ - lunch : stop work, sit down, eat something
+ - dinner : eat at home or tavern
+ - school : head to school building
+
+Note that these may overlap. For example, lunch and work overlap.
+Work and school overlap.
 ]]
 local example_schedule = {
 	{ tod_min=0.000, tod_max=0.200, name="sleep", task="goto_bed", priority=nil },
@@ -220,12 +295,167 @@ local example_schedule = {
 }
 
 --[[
+The key is the schedule/check name. Also the key to self.job_data.complete[key].
+@dow is a bitmask for day of week. 1=Sunday, 2=Monday, 4=Tue, 8=Wed, 0x10=Thu, 0x20=Fri, 0x40=Sat
+@tmin is the 24-hour clock time for the start of the schedule.
+@tmax is the 24-hout clock time for the end of the schedule.
+@check is the function to call to check the schedule (optional)
+@task is a task to add/remove on schedule (optional)
+
+In any case, self.job_data.schedule_active[name] is set to whether the schedule is active.
+]]
+local schedule_dayshift = {
+	sleep     = { dow=0x7f, tmin=22, tmax=6,  task="goto_bed" },            -- tmin > tmax means wrap-around
+	socialize = { dow=0x7f, tmin=6,  tmax=22, check=tasks.check_social },   -- visit with other NPCs
+	breakfast = { dow=0x7f, tmin=7,  tmax=8,  task="meal" },
+	lunch     = { dow=0x7f, tmin=12, tmax=14, task="meal" },
+	dinner    = { dow=0x7f, tmin=17, tmax=19, task="meal" },
+	workprep  = { dow=0x7c, tmin=7,  tmax=8,  task="workprep" },            -- head to town center to get assigned a job for the day, get stuff from chest
+	work      = { dow=0x7c, tmin=8,  tmax=17, check=tasks.check_work },     -- day shift
+	rest      = { dow=0x7c, tmin=10, tmax=11, task="work_break" },          -- morning break
+	rest      = { dow=0x7c, tmin=14, tmax=15, task="work_break" },          -- afternoon break
+	workdone  = { dow=0x7c, tmin=17, tmax=18, check=tasks.check_work },     -- deposit extra stuff in chest
+	school    = { dow=0x7c, tmin=9,  tmax=16, check=tasks.check_school },   -- head to school if young enough
+	recess    = { dow=0x7c, tmin=11, tmax=12, check=tasks.check_school },   -- morning recess
+	recess    = { dow=0x7c, tmin=14, tmax=15, check=tasks.check_school },   -- afternoon recess
+	hometime  = { dow=0x7f, tmin=21, tmax=22, check=tasks.check_hometime }, -- go home
+	church    = { dow=0x01, tmin=21, tmax=22, check=tasks.check_church },   -- go to church (if there is one)
+}
+
+-- mark a schedule item as complete
+function tasks.schedule_done(self, name)
+	if self.job_data.schedule_done[name] == nil then
+		log.action("%s: schedule %s is done", self.inventory_name, name)
+		self.job_data.schedule_done[name] = minetest.get_timeofday() -- true might be sufficient
+	end
+end
+
+-- mark a schedule item as NOT complete
+function tasks.schedule_reset(self, name)
+	if self.job_data.schedule_done[name] ~= nil then
+		log.action("%s: schedule %s is reset", self.inventory_name, name)
+		self.job_data.schedule_done[name] = nil
+	end
+end
+
+function tasks.schedule_is_active(self, name)
+	return self.job_data.schedule_state[name] == "yes"
+end
+
+-- call all the check functions for the schedule items
+function tasks.schedule_check(self)
+	local schedule = self.schedule or schedule_dayshift
+	local dow = minetest.get_day_count() % 7
+	local dow_mask = bit.lshift(1, dow)
+	local tod = minetest.get_timeofday() * 24.0
+
+	log.action("%s: dow=%d tod=%.2f", self.inventory_name, dow, tod)
+
+	--[[
+	First pass to update self.job_data.schedule_state[], which can have 4 values:
+		yes  : scheduled time active and not 'done'
+		end  : scheduled time just ended (either done or schedule)
+		done : schedule is active and done (set by task)
+		no   : schedule not active
+
+		transitions:
+			no -> yes -> end -> done -> no (if task sets "done")
+			no -> yes -> end -> no         (if task does not set "done")
+	]]
+	for name, info in pairs(schedule) do
+		-- determine if this schedule is active based on time/day
+		local active -- boolean
+		if bit.band(dow_mask, info.dow or 0x7f) == 0 then
+			-- not active on this day
+			active = false
+		elseif info.tmin <= info.tmax then
+			active = (tod >= info.tmin) and (tod <= info.tmax)
+		else
+			active = (tod > info.tmin) or (tod < info.tmax)
+		end
+
+		local old_state = self.job_data.schedule_state[name]
+		local new_state = old_state
+		if active then
+			if self.job_data.schedule_done[name] ~= nil then
+				if old_state == "yes" then
+					new_state = "end"
+				else
+					new_state = "done"
+				end
+			else
+				new_state = "yes"
+			end
+		else
+			if self.job_data.schedule_done[name] ~= nil then
+				self.job_data.schedule_done[name] = nil
+			end
+			if old_state == "yes" then
+				new_state = "end"
+			else
+				new_state = "no"
+			end
+		end
+
+		if old_state ~= new_state then
+			self.job_data.schedule_state[name] = new_state
+			log.action("%s: schedule %s : %s => %s", self.inventory_name, name, old_state, new_state)
+		end
+	end
+	--log.action("schedule_state: %s %s", dump(self.job_data.schedule_state), dump(self.job_data.schedule_done))
+
+	--[[
+	Second pass to call functions, add tasks.
+	This is in two passes so, say, check_work can see if 'rest' is active.
+	]]
+	local tasks_to_add = {}
+	local tasks_to_del = {}
+	for name, info in pairs(schedule) do
+		local state = self.job_data.schedule_state[name]
+
+		-- add task if not done
+		if info.task then
+			if state == "yes" then
+				tasks_to_add[info.task] = true
+				--self:task_add(info.task)
+			else
+				tasks_to_del[info.task] = true
+				--self:task_del(info.task, "schedule")
+			end
+		end
+
+		if info.check then
+			if state == "yes" or state == "end" then
+				local active = (state == "yes")
+				log.action("%s: schedule check(%s, %s)", self.inventory_name, name, tostring(active))
+				info.check(self, name, active)
+			end
+		end
+	end
+
+	for tn, _ in pairs(tasks_to_add) do
+		self:task_add(tn)
+	end
+	for tn, _ in pairs(tasks_to_del) do
+		if tasks_to_add[tn] == nil then
+			self:task_del(tn, "schedule")
+		end
+	end
+
+	-- add the idle task if there is nothing else going on
+	-- the idle task never exits (?)
+	if self.task.priority == nil then
+		self:task_add("idle")
+	end
+end
+
+--[[
 Checks the schedule to see what we are supposed to be doing.
 
 Sets self.task_data.work_time=true during work hours.
 Queues other tasks as appropriate.
 ]]
-function tasks.check_schedule(self, the_schedule)
+function tasks.check_schedule_old(self, the_schedule)
 	the_schedule = the_schedule or example_schedule
 	local tod = minetest.get_timeofday()
 	local all_tasks = {} -- need all tasks to know which to disable
@@ -258,13 +488,6 @@ function tasks.check_schedule(self, the_schedule)
 	end
 
 	return names
-end
-
--- Adds the "idle" task if there is no other task
-function tasks.check_idle(self)
-	if self.task.priority == nil then
-		self:task_add("idle")
-	end
 end
 
 -------------------------------------------------------------------------------

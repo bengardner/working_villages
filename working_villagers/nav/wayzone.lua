@@ -732,6 +732,7 @@ function wayzone:get_dest(target_pos)
 	return target_area
 end
 
+-- FIXME: not used
 -- Adds an 'outside' function that allows only the chunks associated with the
 -- hashes listed in allowed_chash.
 -- target_area must be a table.
@@ -803,6 +804,7 @@ function wayzone:link_test_to(to_wz)
 	return self.link_to[to_wz.key] ~= nil
 end
 
+-- FIXME: not used
 -- check if we have a link to the wayzone
 function wayzone:link_test_from(from_wz)
 	log.action("link_test: %s <= %s", self.key, from_wz.key)

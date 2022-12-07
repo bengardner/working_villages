@@ -10,6 +10,8 @@ local log = working_villages.require("log")
 local cmnp = modutil.require("check_prefix","venus")
 local pathfinder = working_villages.require("nav/pathfinder")
 local func = working_villages.require("jobs/util")
+local forms = working_villages.require("forms")
+--local tasks = working_villages.tasks -- require("job_tasks")
 
 ---------------------------------------------------------------------
 
@@ -19,6 +21,127 @@ local func = working_villages.require("jobs/util")
 -- minetest.register_entity set initial properties as a metatable.__index, so
 -- this table's methods must be put there.
 local villager = {}
+
+-- create_inventory creates a new inventory, and returns it.
+function villager:create_inventory()
+	self.inventory_name = self.product_name .. "_" .. tostring(self.manufacturing_number)
+	local inventory = minetest.create_detached_inventory(self.inventory_name, {
+		on_put = function(_, listname, _, stack) --inv, listname, index, stack, player
+			if listname == "job" then
+				local job_name = stack:get_name()
+				local job = working_villages.registered_jobs[job_name]
+				if type(job.logic)=="function" then
+					log.warning("Set job %s", job_name)
+					self.logic = job.logic
+				elseif type(job.on_start)=="function" then
+					job.on_start(self)
+					self.job_thread = coroutine.create(job.on_step)
+				elseif type(job.jobfunc)=="function" then
+					self.job_thread = coroutine.create(job.jobfunc)
+				end
+				self:set_displayed_action("active")
+				self:set_state_info(("I started working as %s."):format(job.description))
+			end
+		end,
+
+		allow_put = function(inv, listname, _, stack) --inv, listname, index, stack, player
+			-- only jobs can put to a job inventory.
+			if listname == "main" then
+				return stack:get_count()
+			elseif listname == "job" and working_villages.is_job(stack:get_name()) then
+				if not inv:is_empty("job") then
+					inv:remove_item("job", inv:get_list("job")[1])
+				end
+				return stack:get_count()
+			elseif listname == "wield_item" then
+				return 0
+			end
+			return 0
+		end,
+
+		on_take = function(_, listname, _, stack) --inv, listname, index, stack, player
+			if listname == "job" then
+				local job_name = stack:get_name()
+				local job = working_villages.registered_jobs[job_name]
+				self.time_counters = {}
+				if job then
+					if type(job.logic)=="function" then
+						log.warning("Set job %s", job_name)
+						self.logic = job.logic
+					elseif type(job.on_stop)=="function" then
+						job.on_stop(self)
+					elseif type(job.jobfunc)=="function" then
+						self.job_thread = false
+					end
+				end
+				self:set_state_info("I stopped working.")
+				self:update_infotext()
+			end
+		end,
+
+		allow_take = function(_, listname, _, stack) --inv, listname, index, stack, player
+			-- removing a wield_item may break the AI scripts
+			if listname == "wield_item" then
+				return 0
+			end
+			return stack:get_count()
+		end,
+
+		on_move = function(inv, from_list, _, to_list, to_index)
+			--inv, from_list, from_index, to_list, to_index, count, player
+			if to_list == "job" or from_list == "job" then
+				local job_name = inv:get_stack(to_list, to_index):get_name()
+				local job = working_villages.registered_jobs[job_name]
+
+				if to_list == "job" then
+					if type(job.logic)=="function" then
+						log.warning("Set job %s", job_name)
+						self.logic = job.logic
+						self:task_clear()
+					elseif type(job.on_start)=="function" then
+						job.on_start(self)
+						self.job_thread = coroutine.create(job.on_step)
+					elseif type(job.jobfunc)=="function" then
+						self.job_thread = coroutine.create(job.jobfunc)
+					end
+				elseif from_list == "job" then
+					if type(job.logic)=="function" then
+						log.warning("Set job %s", job_name)
+						self.logic = job.logic
+						self:task_clear()
+					elseif type(job.on_stop)=="function" then
+						job.on_stop(self)
+					elseif type(job.jobfunc)=="function" then
+						self.job_thread = false
+					end
+				end
+
+				self:set_displayed_action("active")
+				self:set_state_info(("I started working as %s."):format(job.description))
+			end
+		end,
+
+		allow_move = function(inv, from_list, from_index, to_list, _, count)
+			--inv, from_list, from_index, to_list, to_index, count, player
+			if to_list == "wield_item" then
+				return 0
+			end
+
+			if to_list == "main" then
+				return count
+			elseif to_list == "job" and working_villages.is_job(inv:get_stack(from_list, from_index):get_name()) then
+				return count
+			end
+			return 0
+		end,
+	})
+
+	inventory:set_size("main", 16)
+	inventory:set_size("job",  1)
+	inventory:set_size("wield_item", 1)
+
+	return inventory
+end
 
 -- villager.get_inventory returns a inventory of a villager.
 function villager:get_inventory()
@@ -431,7 +554,8 @@ function villager:wield_best_for_dig(node_name)
 			end
 		end
 		local ii = minetest.get_dig_params(nodedef.groups, istack:get_tool_capabilities())
-		if ii.diggable and best.time == nil or best.time > ii.time then
+		log.action("check_tool: %s", dump(ii))
+		if ii.diggable and (best.time == nil or best.time > ii.time) then
 			best.name = istack:get_name()
 			best.istack = istack
 			best.time = ii.time
@@ -912,8 +1036,9 @@ end
 -- or go to bed early (farmer) or later (tarvern)
 -- but for now, just dawn-to-dusk.
 function villager:is_sleep_time()
-	local daytime = minetest.get_timeofday()
-	return (daytime < 0.2 or daytime > 0.8)
+	return working_villages.tasks.schedule_is_active(self, "sleep")
+	--local daytime = minetest.get_timeofday()
+	--return (daytime < 0.2 or daytime > 0.8)
 end
 
 -- stop moving and set the animation to STAND
@@ -1024,6 +1149,35 @@ function villager:physics()
 	end
 end
 
+-- FIXME: using mobkit 'oxygen' instead of minetest 'breath'
+function villager:get_breath()
+	return self.oxygen
+end
+
+-- FIXME: using mobkit 'oxygen' and 'lung_capacity' instead of minetest 'breath' and 'breath_max'.
+function villager:set_breath(value)
+	self.oxygen = math.min(value, self.lung_capacity)
+end
+
+--[[
+Other player-only object methods that may need to be implemented.
+
+* `get_look_dir()`: get camera direction as a unit vector
+* `get_look_vertical()`: pitch in radians
+    * Angle ranges between -pi/2 and pi/2, which are straight up and down
+      respectively.
+* `get_look_horizontal()`: yaw in radians
+    * Angle is counter-clockwise from the +z direction.
+* `set_look_vertical(radians)`: sets look pitch
+    * radians: Angle from looking forward, where positive is downwards.
+* `set_look_horizontal(radians)`: sets look yaw
+    * radians: Angle from the +z direction, where positive is counter-clockwise.
+* `get_meta()`: Returns a PlayerMetaRef.
+]]
+
+--[[
+Update health and breath.
+]]
 function villager:vitals()
 	-- vitals: fall damage
 	local vel = self.object:get_velocity()
@@ -1035,7 +1189,7 @@ function villager:vitals()
 	-- vitals: oxygen
 	if self.lung_capacity then
 		local colbox = self.object:get_properties().collisionbox
-		local headnode = func.nodeatpos(func.pos_shift(self.object:get_pos(),{y=colbox[5]})) -- node at hitbox top
+		local headnode = func.nodeatpos(vector.offset(self.object:get_pos(), 0, colbox[5], 0)) -- node at hitbox top
 		if headnode and headnode.drawtype == 'liquid' then
 			self.oxygen = self.oxygen - self.dtime
 		else
@@ -1088,19 +1242,37 @@ function villager:remember_area(key, pos)
 	self:remember(key, data)
 end
 
+-- forget a single position. used if no longer accessible.
+function villager:forget_area_pos(key, pos)
+	-- round to 8 node increments to reduce the size of the memory
+	local rpos = vector.multiply(vector.round(vector.divide(pos, 8)), 8)
+	local hash = minetest.hash_node_position(rpos)
+
+	local data = self:recall(key) or {}
+	if data[hash] ~= nil then
+		data[hash] = nil
+		self:remember(key, data)
+	end
+end
+
 -- forgets any position older than max_dtime. Use forget() to drop everything.
 function villager:forget_area(key, max_dtime)
 	local data = self:recall(key)
 	if data ~= nil then
 		local tref = minetest.get_gametime()
 		local new_data = {}
+		local changed = false
 		for k, v in pairs(data) do
 			local dt = tref - v
 			if dt <= max_dtime then
-				new_data[k] = v
+				new_data[k] = v -- keeping, no change
+			else
+				changed = true -- dropping the entry
 			end
 		end
-		self:remember(key, new_data)
+		if changed then
+			self:remember(key, new_data)
+		end
 	end
 end
 
@@ -1118,9 +1290,334 @@ end
 
 --------------------------------------------------------------------
 
+function villager:logic_default()
+	if func.timer(self, 1) then
+		working_villages.tasks.schedule_check(self)
+	end
+end
+
+-- on_step is a callback function that is called every delta times.
+function villager:on_step(dtime, colinfo)
+	-- copied from mobkit
+	self.dtime = math.min(dtime,0.2)
+	self.colinfo = colinfo
+	self.height = func.get_box_height(self)
+
+	local need_jump = false
+
+	-- physics comes first
+	local vel = self.object:get_velocity()
+	if colinfo then
+		self.isonground = colinfo.touching_ground
+		-- get the node that we are standing on
+		local logit = #colinfo.collisions > 1
+		for _, ci in ipairs(colinfo.collisions) do
+			if ci.type == "node" then
+				if logit then
+					log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
+				end
+				if ci.axis == 'y' then
+					local rpos = vector.round(ci.node_pos)
+					if self.stand_pos == nil or not vector.equals(self.stand_pos, rpos) then
+						-- FIXME: why is this logging constantly? is something else clearing it?
+						--log.action("set stand_pos=%s", minetest.pos_to_string(rpos))
+						self.stand_pos = rpos
+					end
+					break
+				else
+					need_jump = true
+				end
+			end
+		end
+	else
+		if self.lastvelocity.y==0 and vel.y==0 then
+			self.isonground = true
+		else
+			self.isonground = false
+		end
+	end
+	self:physics()
+
+	if need_jump then
+		vel.y = 6.5
+		self.object:set_velocity(vel)
+	end
+
+	if not self.pause then
+		-- pickup surrounding item.
+		self:pickup_items()
+
+		if self.view_range then
+			self:sensefunc()
+		end
+		self:logic_default()
+		self:task_execute()
+	end
+
+	self.lastvelocity = self.object:get_velocity()
+	self.time_total = self.time_total + self.dtime
+end
+
+--------------------------------------------------------------------
+
+-- copied from mobkit
+local function sensors()
+	local timer = 2
+	local pulse = 1
+	return function(self)
+		timer = timer - self.dtime
+		if timer < 0 then
+			pulse = pulse + 1 -- do full range every third scan
+			local range = self.view_range
+			if pulse > 2 then
+				pulse = 1
+			else
+				range = self.view_range * 0.5
+			end
+
+			local pos = self.object:get_pos()
+			self.nearby_objects = minetest.get_objects_inside_radius(pos, range)
+			-- remove self from the list
+			for i,obj in ipairs(self.nearby_objects) do
+				if obj == self.object then
+					table.remove(self.nearby_objects, i)
+					break
+				end
+			end
+			timer = 2
+		end
+	end
+end
+
+-- on_activate is a callback function that is called when the object is created or recreated.
+function villager:on_activate(staticdata)
+	local function fix_pos_data(self)
+		if self:has_home() then
+			-- share some data from building sign
+			local sign = self:get_home()
+			self.pos_data.home_pos = sign:get_door()
+			self.pos_data.bed_pos = sign:get_bed()
+		end
+		if self.village_name then
+			-- TODO: share pos data from central village data
+			--local village = working_villages.get_village(self.village_name)
+			--if village then
+				--self.pos_data = village:get_villager_pos_data(self.inventory_name)
+			--end
+			-- remove this later
+			return -- do semething for luacheck
+		end
+	end
+
+	-- parse the staticdata, and compose the inventory.
+	if staticdata == "" then
+		-- this is a new villager
+		self.manufacturing_number = working_villages.next_manufacturing_number(name)
+		self:create_inventory()
+	else
+		-- if static data is not empty string, this object has beed already created.
+		local data = minetest.deserialize(staticdata)
+		self.manufacturing_number = data.manufacturing_number
+		self.nametag = data.nametag
+		self.owner_name = data.owner_name
+		self.pause = data.pause
+		self.job_data = data.job_data
+		self.state_info = data.state_info
+		self.pos_data = data.pos_data
+		self.memory = data.memory
+
+		local inventory = self:create_inventory()
+		for list_name, list in pairs(data["inventory"]) do
+			inventory:set_list(list_name, list)
+		end
+		fix_pos_data(self)
+	end
+
+	-- make sure certain fields are tables
+	for _, tnam in ipairs({"memory", "job_data", "pos_data", "armor_groups"}) do
+		if type(self[tnam]) ~= "table" then
+			self[tnam] = {}
+		end
+	end
+
+	-- We have to handle damage/breath to do it right (death animation, etc)
+	self.armor_groups.immortal = 1
+	self.object:set_armor_groups(self.armor_groups)
+
+	if self.job_data.schedule_state == nil then
+		self.job_data.schedule_state = {}
+	end
+	if self.job_data.schedule_done == nil then
+		self.job_data.schedule_done = {}
+	end
+
+	-- create the wield holder thingy (right handed)
+	self.hand = minetest.add_entity(self.object:get_pos(), "working_villages:wield_entity")
+	self.hand:set_attach(self.object, "Arm_Right", {x=0, y=5.5, z=3}, {x=-90, y=225, z=90}, true)
+
+	--hp
+	self.max_hp = self.max_hp or 10
+	self.hp = self.hp or self.max_hp
+	self.time_total = 0
+	self.water_drag = self.water_drag or 1
+
+	self.buoyancy = self.buoyancy or 0
+	self.oxygen = self.oxygen or self.lung_capacity
+	self.lastvelocity = {x=0,y=0,z=0}
+	self.sensefunc = sensors()
+
+	-- create task stuff (not saved)
+	self.task_queue = {} -- queue of tasks to run
+	self.task_data = {}  -- misc data for the task
+	self.task = {}       -- active task name and priority
+
+	self:set_displayed_action("active")
+
+	self.object:set_nametag_attributes{
+		text = self.nametag
+	}
+
+	-- have to set an animation for the wield_item to be linked right
+	self:stand_still()
+	self.object:set_acceleration{x = 0, y = func.gravity, z = 0}
+
+	--legacy
+	if type(self.pause) == "string" then
+		self.pause = (self.pause == "resting")
+	end
+
+	-- register this as a NPC
+	if working_villages.active_villagers[self.inventory_name] ~= nil then
+		log.warning("on_activate: [%s] -- DUPLICATE", self.inventory_name)
+		self.object:remove()
+	else
+		working_villages.active_villagers[self.inventory_name] = self
+		log.warning("on_activate: [%s]", self.inventory_name)
+	end
+end
+
+function villager:on_deactivate(removal)
+	log.warning("deactivate %s removal=%s", self.inventory_name, tostring(removal))
+	-- remove the hand thingy
+	if self.hand then
+		self.hand:remove()
+	end
+	working_villages.active_villagers[self.inventory_name] = nil
+end
+
+-- get_staticdata is a callback function that is called when the object is destroyed.
+-- it is used to save any instance data that needs to be preserved
+function villager:get_staticdata()
+	local inventory = self:get_inventory()
+	local data = {
+		manufacturing_number = self.manufacturing_number,
+		nametag = self.nametag,
+		owner_name = self.owner_name,
+		inventory = {},
+		pause = self.pause,
+		job_data = self.job_data,
+		state_info = self.state_info,
+		pos_data = self.pos_data,
+		memory = self.memory,
+	}
+
+	-- set inventory lists.
+	for list_name, list in pairs(inventory:get_lists()) do
+		data.inventory[list_name] = {}
+		for i, item in ipairs(list) do
+			data.inventory[list_name][i] = item:to_string()
+		end
+	end
+
+	return minetest.serialize(data)
+end
+
+-- on_rightclick is a callback function that is called when a player right-click them.
+function villager:on_rightclick(clicker)
+	local wielded_stack = clicker:get_wielded_item()
+	if wielded_stack:get_name() == "working_villages:commanding_sceptre"
+		and (self.owner_name == "working_villages:self_employed"
+		or clicker:get_player_name() == self.owner_name or
+		minetest.check_player_privs(clicker, "debug"))
+	then
+		forms.show_formspec(self, "working_villages:inv_gui", clicker:get_player_name())
+	else
+		forms.show_formspec(self, "working_villages:talking_menu", clicker:get_player_name())
+	end
+end
+
+-- on_punch is a callback function that is called when a player punches a villager.
+function villager:on_punch(puncher, time_from_last_punch, tool_capabilities, dir, damage)
+	--TODO: aggression (add player ratings table)
+end
+
 -- villager:new returns a new villager object.
-function villager:new(o)
-	return setmetatable(o or {}, {__index = self})
+function villager.new(def)
+	local self = {
+		-- these are the required minetest "Object properties"
+		initial_properties = {
+			hp_max                      = def.hp_max, -- valid, unused
+			mesh                        = def.mesh,
+			textures                    = def.textures,
+
+			--TODO: put these into working_villagers.villager
+			physical                    = true,
+			visual                      = "mesh",
+			visual_size                 = {x = 1, y = 1},
+			collisionbox                = {-0.25, 0, -0.25, 0.25, 1.75, 0.25},
+			pointable                   = true,
+			stepheight                  = 0.6,
+			is_visible                  = true,
+			makes_footstep_sound        = true,
+			automatic_face_movement_dir = false,
+			infotext                    = "",
+			nametag                     = "hello",
+			static_save                 = true,
+			show_on_minimap             = true,
+			damage_texture_modifier     = "^[brighten",
+		},
+
+		-- extra initial properties
+		weight                      = def.weight, -- ??
+		max_hp                      = def.hp_max or 10,
+
+		pause                       = false,
+		disp_action                 = "inactive\nNo job",
+		state                       = "job",
+		state_info                  = "I am doing nothing particular.",
+		job_thread                  = false,
+		product_name                = def.product_name,
+		manufacturing_number        = -1,
+		owner_name                  = "",
+		time_counters               = {},
+		destination                 = vector.zero(),
+		job_data                    = {},
+		pos_data                    = {},
+		new_job                     = "",
+
+		view_range                  = 10, -- can see objects in this range
+		lung_capacity               = 30, -- seconds
+
+		-- callback methods
+		on_activate                 = villager.on_activate,
+		on_deactivate               = villager.on_deactivate,
+		on_step                     = villager.on_step,
+		on_rightclick               = villager.on_rightclick,
+		on_punch                    = villager.on_punch,
+		get_staticdata              = villager.get_staticdata,
+
+		-- storage methods?? NOT USED? What for?
+		get_stored_table            = working_villages.get_stored_villager_table,
+		set_stored_table            = working_villages.set_stored_villager_table,
+		clear_cached_table          = working_villages.clear_cached_villager_table,
+
+		-- home methods
+		get_home                    = working_villages.get_home,
+		has_home                    = working_villages.is_valid_home,
+		set_home                    = working_villages.set_home,
+		remove_home                 = working_villages.remove_home,
+	}
+	return setmetatable(self, {__index = villager})
 end
 
 return villager
