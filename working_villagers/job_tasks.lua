@@ -131,7 +131,8 @@ local function task_goto_bed(self)
 			self:delay_seconds(5)
 		end
 
-		self:set_animation(working_villages.animation_frames.STAND)
+		--self:set_animation(working_villages.animation_frames.STAND)
+		self:animate("stand")
 		self:set_state_info("I'm starting into the new day.")
 		self:set_displayed_action("active")
 	else
@@ -214,6 +215,34 @@ local function task_wait(self)
 	return true
 end
 working_villages.register_task("wait", { func = task_wait, priority = 10 })
+
+local function task_wait_sit(self)
+	local sec_left = self.task_data.wait_seconds or 30
+	log.action("%s: I am waiting for %s seconds", self.inventory_name, sec_left)
+	self:set_displayed_action("waiting")
+	while sec_left > 0 do
+		self:sit_down()
+		local ds = math.max(1, sec_left)
+		self:delay_seconds(ds)
+		sec_left = sec_left - ds
+	end
+	return true
+end
+working_villages.register_task("wait_sit", { func = task_wait_sit, priority = 10 })
+
+local function task_wait_lay(self)
+	local sec_left = self.task_data.wait_seconds or 30
+	log.action("%s: I am waiting for %s seconds", self.inventory_name, sec_left)
+	self:set_displayed_action("waiting")
+	while sec_left > 0 do
+		self:lay_down()
+		local ds = math.max(1, sec_left)
+		self:delay_seconds(ds)
+		sec_left = sec_left - ds
+	end
+	return true
+end
+working_villages.register_task("wait_lay", { func = task_wait_lay, priority = 10 })
 
 -- waits for self.task_data.wait_seconds, which is not altered
 local function task_meal(self)

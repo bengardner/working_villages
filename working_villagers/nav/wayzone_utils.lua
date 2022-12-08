@@ -3,6 +3,8 @@ Misc utility functions that do not belong anywhere else.
 ]]
 local wayzone = working_villages.require("nav/wayzone")
 local log = working_villages.require("log")
+local line_store = working_villages.require("nav/line_store")
+local lines = line_store.new("visible", {spacing=0.2})
 
 local wayzone_utils = {}
 
@@ -47,26 +49,140 @@ local function put_particle(pos, args)
 end
 wayzone_utils.put_particle = put_particle
 
+wayzone_utils.dir_vectors = {
+	[1] = vector.new( 0, 0, -1), -- up
+	[2] = vector.new( 1, 0, -1), -- up/right
+	[3] = vector.new( 1, 0,  0), -- right
+	[4] = vector.new( 1, 0,  1), -- down/right
+	[5] = vector.new( 0, 0,  1), -- down
+	[6] = vector.new(-1, 0,  1), -- down/left
+	[7] = vector.new(-1, 0,  0), -- left
+	[8] = vector.new(-1, 0, -1), -- up/left
+}
+-- adds to the dir index while wrapping around 1 and 8
+function wayzone_utils.dir_add(dir, delta)
+	return 1 + ((dir - 1 + delta) % 8) -- modulo gives 0-7, need 1-8
+end
+
+function find_pos_in_wz(wz, pos)
+	pos = vector.round(pos)
+	for dy=-2,1 do
+		local tp = vector.offset(pos, 0, dy, 0)
+		if wz:inside(tp) then
+			return tp
+		end
+	end
+	return nil
+end
+
+local function get_9_neighbors(wz, pos)
+	local nn = {}
+	for nidx, vec in ipairs(wayzone_utils.dir_vectors) do
+		nn[nidx] = find_pos_in_wz(wz, vector.add(pos, vec))
+	end
+	return nn
+end
+
+--[[
+See if we can do a "line" between the two without hitting a node that isn't present
+If we move diagonal, we need to check to see if one corner is open.
+]]
+local function wz_visible_line(wz, spos, dpos)
+	local delta = vector.subtract(dpos, spos)
+	local steps = math.max(math.abs(delta.x), math.abs(delta.z))
+	local vstep = vector.divide(delta, steps)
+	vstep.y = 0
+
+	--log.action("wz_visible_line: %s %s", minetest.pos_to_string(spos), minetest.pos_to_string(dpos))
+	local fpos = spos
+	local prev = spos
+	for _=1,steps do
+		local tpos = vector.add(fpos, vstep)
+		local rpos = vector.round(tpos)
+		local wpos = find_pos_in_wz(wz, rpos)
+		if wpos == nil then
+			return false
+		end
+		if prev.x ~= rpos.x and prev.z ~= rpos.z then
+			local tp1 = vector.new(prev.x, rpos.y, rpos.z)
+			local tp2 = vector.new(rpos.x, rpos.y, prev.z)
+			if find_pos_in_wz(wz, tp1) == nil and find_pos_in_wz(wz, tp2) == nil then
+				return false
+			end
+		end
+		prev = rpos
+		fpos = vector.new(tpos.x, rpos.y, tpos.z)
+	end
+	return true
+end
+
+local function detect_edges(wz)
+	log.action("detect_edges: %s", tostring(wz.key))
+	local edges = {}
+	for pos in wz:iter_visited() do
+		local nn = get_9_neighbors(wz, pos)
+		--log.action(" -- %s => %s", minetest.pos_to_string(pos), dump(nn))
+		for ii=2,8,2 do
+			if (not nn[ii]) and nn[ii-1] and nn[wayzone_utils.dir_add(ii,1)] then
+				log.warning("edge %s", minetest.pos_to_string(pos))
+				table.insert(edges, {pos=pos})
+				break
+			end
+		end
+	end
+	for si=1,#edges do
+		local se = edges[si]
+		for di=si+1,#edges do
+			local de = edges[di]
+			if wz_visible_line(wz, se.pos, de.pos) then
+				table.insert(se, de.pos)
+			end
+		end
+	end
+	--do
+	--	local p1 = vector.new(417,5,-50)
+	--	local p2 = vector.new(422,5,-51)
+	--	if wz_visible_line(wz, p1, p2) then
+	--		lines:draw_line(p1, p2)
+	--	end
+	--end
+
+	return edges
+end
+
 -- show particles for one wayzone
 function wayzone_utils.show_particles_wz(wz)
 	local vn = "wayzone_node.png"
 	local xn = "wayzone_exit.png"
 	local xc = "wayzone_center.png"
+	local xe = "waypoint_sign.png"
 	local cc = wz_colors[(wz.index % #wz_colors)+1]
 	local vt = string.format("%s^[multiply:#%02x%02x%02x", vn, cc[1], cc[2], cc[3])
 	local xt = string.format("%s^[multiply:#%02x%02x%02x", xn, cc[1]/2, cc[2]/2, cc[3]/2)
 	local xcc = string.format("%s^[multiply:#%02x%02x%02x", xc, cc[1], cc[2], cc[3])
+	local xec = string.format("%s^[multiply:#%02x%02x%02x", xe, cc[1], cc[2], cc[3])
 	local cpos = wz:get_center_pos()
 	local dy = -0.25 + (wz.index / 8)
 
+	-- center marker
 	put_particle(vector.new(cpos.x, cpos.y+dy, cpos.z), {texture=xcc})
 
+	-- positions that are part of the wayzone
 	for pp in wz:iter_visited() do
 		put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=vt})
 	end
 
+	-- exit nodes
 	for pp in wz:iter_exited() do
 		put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=xt})
+	end
+
+	lines:clear()
+	for _, pp in pairs(detect_edges(wz)) do
+		put_particle(vector.new(pp.pos.x, pp.pos.y+dy+0.1, pp.pos.z), {texture=xec})
+		for _, vv in ipairs(pp) do
+			lines:draw_line(pp.pos, vv)
+		end
 	end
 end
 

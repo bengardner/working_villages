@@ -37,12 +37,14 @@ working_villages.register_job("working_villages:job_guard", {
 			local velocity = self.object:get_velocity()
 			if vector.length(distance) < 3 then
 				if velocity.x~=0 or velocity.y~=0 then
-					self:set_animation(working_villages.animation_frames.STAND)
+					--self:set_animation(working_villages.animation_frames.STAND)
+					self:animate("stand")
 					self.object:set_velocity{x = 0, y = velocity.y, z = 0}
 				end
 			else
 				if velocity.x==0 and velocity.y==0 then
-					self:set_animation(working_villages.animation_frames.WALK)
+					--self:set_animation(working_villages.animation_frames.WALK)
+					self:animate("walk")
 				end
 				--FIXME: don't run too fast, perhaps go_to
 				self.object:set_velocity{x = distance.x, y = velocity.y, z = distance.z}

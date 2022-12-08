@@ -49,7 +49,8 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 
 	--print("the first waypiont on his path:" .. minetest.pos_to_string(self.path[1]))
 	--self:change_direction(self.path[1])
-	self:set_animation(working_villages.animation_frames.WALK)
+	--self:set_animation(working_villages.animation_frames.WALK)
+	self:animate("walk")
 
 	-- NOTE: If we will do a sharp turn (90 deg) when we hit the current
 	-- waypoint, then we need to reach exactly the node center before the turn.
@@ -70,7 +71,8 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	local exact_step = need_exact_pos()
 
 	while true do
-		self:set_animation(working_villages.animation_frames.WALK)
+		--self:set_animation(working_villages.animation_frames.WALK)
+		self:animate("walk")
 		if self.cur_goal == nil then
 			self.cur_goal = wzp:next_goal(self.stand_pos)
 			if self.cur_goal == nil then
@@ -154,8 +156,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	-- the path may not have placed us at the destination, so the caller will
 	-- check and retry.
 	self.path = nil
-	self.object:set_velocity{x = 0, y = 0, z = 0}
-	self:set_animation(working_villages.animation_frames.STAND)
+	self:stand_still()
 	return true
 end
 
@@ -320,7 +321,8 @@ function working_villages.villager:dig(pos,collect_drops,do_dist_check)
 	end
 
 	-- start the 'mine' animation, facing the node
-	self:set_animation(working_villages.animation_frames.MINE)
+	--self:set_animation(working_villages.animation_frames.MINE)
+	self:animate("mine")
 	self:set_yaw_by_direction(dist)
 
 	local destnode = minetest.get_node(pos)
@@ -397,9 +399,11 @@ function working_villages.villager:place(item, pos)
 	end
 	--set animation
 	if self.object:get_velocity().x==0 and self.object:get_velocity().z==0 then
-		self:set_animation(working_villages.animation_frames.MINE)
+		--self:set_animation(working_villages.animation_frames.MINE)
+		self:animate("mine")
 	else
-		self:set_animation(working_villages.animation_frames.WALK_MINE)
+		--self:set_animation(working_villages.animation_frames.WALK_MINE)
+		self:animate("walk_mine")
 	end
 	--turn to target
 	self:set_yaw_by_direction(dist)
@@ -456,9 +460,11 @@ function working_villages.villager:place(item, pos)
 	end
 	--reset animation
 	if self.object:get_velocity().x==0 and self.object:get_velocity().z==0 then
-		self:set_animation(working_villages.animation_frames.STAND)
+		--self:set_animation(working_villages.animation_frames.STAND)
+		self:animate("stand")
 	else
-		self:set_animation(working_villages.animation_frames.WALK)
+		--self:set_animation(working_villages.animation_frames.WALK)
+		self:animate("walk")
 	end
 
 	return true
@@ -526,17 +532,20 @@ function working_villages.villager:sleep()
 	else
 		log.info("villager %s found no bed", self.inventory_name)
 	end
-	self:set_animation(working_villages.animation_frames.LAY)
+	--self:set_animation(working_villages.animation_frames.LAY)
+	self:animate("lay")
 	self.object:setpos(bed_pos)
 	self:set_state_info("Zzzzzzz...")
 	self:set_displayed_action("sleeping")
 
+	-- FIXME: this should be based on the schedule
 	self.wait_until_dawn()
 
 	local pos=self.object:get_pos()
 	self.object:setpos({x=pos.x,y=pos.y+0.5,z=pos.z})
 	log.action("villager %s gets up", self.inventory_name)
-	self:set_animation(working_villages.animation_frames.STAND)
+	--self:set_animation(working_villages.animation_frames.STAND)
+	self:animate("stand")
 	self:set_state_info("I'm starting into the new day.")
 	self:set_displayed_action("active")
 end
@@ -546,10 +555,10 @@ function working_villages.villager:goto_bed()
 		log.action("villager %s is waiting until dawn", self.inventory_name)
 		self:set_state_info("I'm waiting for dawn to come.")
 		self:set_displayed_action("waiting until dawn")
-		self:set_animation(working_villages.animation_frames.SIT)
-		self.object:set_velocity{x = 0, y = 0, z = 0}
+		self:sit_down()
 		self.wait_until_dawn()
-		self:set_animation(working_villages.animation_frames.STAND)
+		--self:set_animation(working_villages.animation_frames.STAND)
+		self:animate("stand")
 		self:set_state_info("I'm starting into the new day.")
 		self:set_displayed_action("active")
 	else
@@ -569,8 +578,7 @@ function working_villages.villager:goto_bed()
 			end
 			self:set_state_info("I'm waiting for dawn to come.")
 			self:set_displayed_action("waiting until dawn")
-			self:set_animation(working_villages.animation_frames.SIT)
-			self.object:set_velocity{x = 0, y = 0, z = 0}
+			self:sit_down()
 			self.wait_until_dawn()
 		else
 			log.info("villager %s bed is at: %s", self.inventory_name, minetest.pos_to_string(self.pos_data.bed_pos))

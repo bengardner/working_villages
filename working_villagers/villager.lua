@@ -447,6 +447,35 @@ function villager:get_look_direction()
 	return vector.normalize{x = -math.sin(yaw), y = 0.0, z = math.cos(yaw)}
 end
 
+function villager:animate(anim)
+	if self.animation and self.animation[anim] then
+		if self._anim == anim then
+			return
+		end
+		log.action("%s: animate %s", self.inventory_name, anim)
+		self._anim = anim
+
+		local aparms = {}
+		if #self.animation[anim] > 0 then
+			aparms = self.animation[anim][random(#self.animation[anim])]
+		else
+			aparms = self.animation[anim]
+		end
+
+		self.object:set_animation(aparms.range, aparms.speed, aparms.frame_blend or 0, aparms.loop)
+		if anim == "lay" then
+			local dir = self:get_look_direction()
+			local dirx = math.abs(dir.x)*0.5
+			local dirz = math.abs(dir.z)*0.5
+			self.object:set_properties({collisionbox={-0.5-dirx, 0, -0.5-dirz, 0.5+dirx, 0.5, 0.5+dirz}})
+		else
+			self.object:set_properties({collisionbox={-0.25, 0, -0.25, 0.25, 1.75, 0.25}})
+		end
+	else
+		self._anim = nil
+	end
+end
+
 -- villager.set_animation sets the villager's animation.
 -- this method is wrapper for self.object:set_animation.
 function villager:set_animation(frame)
@@ -657,7 +686,8 @@ function villager:change_direction_randomly()
 	local velocity = vector.multiply(vector.normalize(direction), 1.5)
 	self.object:set_velocity(velocity)
 	self:set_yaw_by_direction(direction)
-	self:set_animation(working_villages.animation_frames.WALK)
+	--self:set_animation(working_villages.animation_frames.WALK)
+	self:animate("walk")
 end
 
 -- villager.get_timer get the value of a counter.
@@ -1044,13 +1074,26 @@ end
 -- stop moving and set the animation to STAND
 function villager:stand_still()
 	self.object:set_velocity{x = 0, y = 0, z = 0}
-	self:set_animation(working_villages.animation_frames.STAND)
+	--self:set_animation(working_villages.animation_frames.STAND)
+	self:animate("stand")
 end
 
 -- stop moving and set the animation to SIT
 function villager:sit_down()
+	--local pos = vector.round(self.object:get_pos())
+	--if minetest.get_node(pos).name == "air" then
+	--	pos = vector.offset(pos, 0, -1, 0)
+	--	if func.is_bed()
+	--end
 	self.object:set_velocity{x = 0, y = 0, z = 0}
-	self:set_animation(working_villages.animation_frames.SIT)
+	--self:set_animation(working_villages.animation_frames.SIT)
+	self:animate("sit")
+end
+
+function villager:lay_down()
+	-- TODO: align on the bed? or find a good place to lay (grass?)
+	self.object:set_velocity{x = 0, y = 0, z = 0}
+	self:animate("lay")
 end
 
 function villager:pick_random_location(radius)
@@ -1146,6 +1189,47 @@ function villager:physics()
 				self.object:set_acceleration{x = 0, y=func.gravity*10, z = 0}
 			end
 		end
+	end
+
+	-- special handling for sitting and laying
+	if self._anim == "sit" then
+		local pos = self.object:get_pos()
+		local rpos = vector.round(pos)
+		local node = minetest.get_node(rpos)
+
+		-- TODO: if node is no longer a chair/bench/bed...
+
+		if not self._sit_info then
+			log.warning("%s: sit stuff: created sit_info", self.inventory_name)
+			self._sit_info = { pos=pos, npos=rpos, rot=-1 }-- force update
+		end
+
+		if bit.rshift(node.param2, 2) ~= 0 then
+			-- if the chair is not aligned on +Y, we stand up
+			self:stand_still()
+		else
+			local rotoff = self._sit_info.rotoff or 0
+			local rot = bit.band(node.param2 + rotoff, 3)
+			if self._sit_info.rot ~= rot then
+				-- TODO: sit down should populate self._sit_info = { pos, rot }
+				log.warning("%s: sit stuff: %s rot=%d off=%d p2=%d %s %s",
+					self.inventory_name,
+					node.name, rot, rotoff, node.param2,
+					minetest.pos_to_string(rpos), minetest.pos_to_string(pos))
+
+				self._sit_info.rot = rot
+				self:set_yaw_by_direction(vector.subtract(vector.zero(), minetest.facedir_to_dir(rot)))
+			end
+			--self.object:set_pos(self._sit_info.pos)
+		end
+		-- don't want to fall to the ground through defective chairs
+		--self.object:set_acceleration{x=0, y=0, z=0}
+		--self.object:set_velocity{x=0, y=0, z=0}
+		--self.object:set_properties({collide_with_objects=false})
+	elseif self._sit_info then
+		log.warning("%s: sit stuff: cleared sit_info", self.inventory_name)
+		--self.object:set_properties({collide_with_objects=true})
+		self._sit_info = nil
 	end
 end
 
@@ -1575,6 +1659,15 @@ function villager.new(def)
 			static_save                 = true,
 			show_on_minimap             = true,
 			damage_texture_modifier     = "^[brighten",
+		},
+
+		animation = {
+			stand     = { range={ x=  0, y= 79, }, speed=15, loop=true },
+			sit       = { range={ x= 81, y=160, }, speed=15, loop=true },
+			lay       = { range={ x=162, y=166, }, speed=15, loop=true },
+			walk      = { range={ x=168, y=187, }, speed=15, loop=true },
+			mine      = { range={ x=189, y=198, }, speed=15, loop=true },
+			walk_mine = { range={ x=200, y=219, }, speed=15, loop=true },
 		},
 
 		-- extra initial properties

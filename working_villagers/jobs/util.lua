@@ -585,4 +585,65 @@ function func.resolve_item_name(item)
 	end
 end
 
+function func.is_bed(name)
+	return minetest.get_item_group(name, "bed") > 0
+end
+
+function func.is_stair(name)
+	return minetest.get_item_group(name, "stair") > 0
+end
+
+function func.is_chair(name)
+	-- really should bug the mod authors to add a "chair" group
+	return string.find(name, "chair_") or string.find(name, "_chair")
+end
+
+function func.is_bench(name)
+	-- really should bug the mod authors to add a "chair" or "bench" group
+	return string.find(name, "bench_") or string.find(name, "_bench")
+end
+
+local seat_adjustments = {
+	{ "furniture:chair_thick_", vector.new(0, -0.1, 0.15) },
+	{ "furniture:chair_",       vector.new(0, 0.05, 0) },
+	{ "ts_furniture:default_.*_bench", vector.new(0, 0, -0.2) },
+}
+
+function func.get_seat_offset_or_nil(name)
+	for _, ii in ipairs(seat_adjustments) do
+		if string.match(name, ii[1]) then
+			return ii[2]
+		end
+	end
+	return nil
+end
+
+function func.get_seat_offset(name)
+	return func.get_seat_offset_or_nil(name) or vector.zero()
+end
+
+-- rotate @vec based on dir, which should be from 0 to 3
+function func.rotate_facedir(vec, dir)
+	if dir == 1 then -- 90 deg?
+		return vector.new(-vec.z, vec.y, vec.x)
+	elseif dir == 2 then -- 180 deg?
+		return vector.new(-vec.x, vec.y, -vec.z)
+	elseif dir == 3 then -- -90 deg?
+		return vector.new(vec.z, vec.y, -vec.x)
+	else
+		return vec -- 0 degrees
+	end
+end
+
+-- get the seat position for @name, NPC @pos, @dir is low 2 bits of facedir
+function func.get_seat_pos(name, pos, dir)
+	local vec = func.get_seat_offset_or_nil(name)
+	if not vec then
+		return pos
+	end
+	local res = vector.add(pos, func.rotate_facedir(vec, dir))
+	log.action("get_seat_pos: %s %s %d => %s %s", name, minetest.pos_to_string(pos), dir, minetest.pos_to_string(vec), minetest.pos_to_string(res))
+	return res
+end
+
 return func

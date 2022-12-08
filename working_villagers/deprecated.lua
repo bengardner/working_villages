@@ -127,7 +127,8 @@ function func.villager_state_machine_job(job_name,job_description,actions, sprop
 	local function to_walk_randomly(self)
 		self:set_timer(1,20)
 		self:set_timer(2,0)
-		self:set_animation(working_villages.animation_frames.WALK)
+		--self:set_animation(working_villages.animation_frames.WALK)
+		self:animate("walk")
 	end
 
 	local function s_search_idle(self)
@@ -177,8 +178,7 @@ function func.villager_state_machine_job(job_name,job_description,actions, sprop
 	local function to_search_idle(self)
 		self:set_timer(1,0)
 		self:set_timer(2,0)
-		self.object:set_velocity{x = 0, y = 0, z = 0}
-		self:set_animation(working_villages.animation_frames.STAND)
+		self:stand_still()
 	end
 
 	--sleeping states

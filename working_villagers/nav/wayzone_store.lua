@@ -258,7 +258,7 @@ local function process_chunk(self, chunk_hash)
 			if self.debug > 1 then
 				log.action(" Probe Slot %s", minetest.pos_to_string(tpos))
 			end
-			local visitHash, exitHash, wzFlags = pathfinder.wayzone_flood(tpos, area)
+			local visitHash, exitHash, wzFlags, edges = pathfinder.wayzone_flood(tpos, area)
 			local wz = wzc:new_wayzone()
 			for h, _ in pairs(visitHash) do
 				local pp = minetest.get_position_from_hash(h)

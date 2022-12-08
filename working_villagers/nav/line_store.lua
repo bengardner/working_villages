@@ -38,6 +38,13 @@ function line_store.new(name, def)
 	return setmetatable(self, { __index = line_store })
 end
 
+local function resolve_store(name_or_inst)
+	if type(name_or_inst) == "string" then
+		return line_store_names[name]
+	end
+	return name_or_inst
+end
+
 -- get a line store that has already been created
 function line_store.get(name)
 	return line_store_names[name]
@@ -45,7 +52,7 @@ end
 
 -- clear all lines from a line store
 function line_store.clear(name)
-	local store = line_store_names[name]
+	local store = resolve_store(name)
 	if store then
 		store:clear()
 	end
@@ -60,7 +67,7 @@ end
 
 -- remove a line store, destroying all lines in it
 function line_store.remove(name)
-	local store = line_store_names[name]
+	local store = resolve_store(name)
 	if store then
 		store:clear()
 		line_store_names[name] = nil

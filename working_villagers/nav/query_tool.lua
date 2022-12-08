@@ -138,21 +138,91 @@ local function do_tool_log()
 	--log.action("Minetest: %s", dump(minetest.get_all_craft_recipes()))
 end
 
+function is_bed(name)
+	return minetest.get_item_group(name, "bed") > 0
+end
+
+function is_stair(name)
+	return minetest.get_item_group(name, "stair") > 0
+end
+
+function is_chair(name)
+	return string.find(name, "chair_") or string.find(name, "_chair")
+end
+
+function is_bench(name)
+	return string.find(name, "bench_") or string.find(name, "_bench")
+end
+
+--[[
+Determine the sit position and orientation.
+Checks the node at pos and below to see if either is sittable.
+Chairs:
+ - if of type "fixed", then just sit in the node
+ - if type "mesh", then pos = middle of the chair node (y+0.5)
+
+bench:
+ - so far all are good, use the face dir
+
+bed:
+ - use the face dir and pos (works, faces off bottom of bed.
+ - if the bottom of the bed is blocked, then try +-90 deg
+
+@return sit_pos, face_dir
+]]
+function get_sit_pos(pos)
+
+end
+
+local function do_sit_log()
+	local ii = {}
+	for name, def in pairs(minetest.registered_nodes) do
+		if minetest.get_item_group(name, "bed") > 0 then
+			table.insert(ii, { "bed", name })
+		elseif minetest.get_item_group(name, "stair") > 0 then
+			if string.find(name, "_inner_") == nil and string.find(name, "_outer_") == nil then
+				table.insert(ii, { "stair", name })
+			end
+		elseif string.find(name, "chair_") or string.find(name, "_chair") then
+			table.insert(ii, { "chair", name })
+		elseif string.find(name, "bench_") or string.find(name, "_bench") then
+			table.insert(ii, { "bench", name })
+		elseif string.find(name, "slab") then
+			table.insert(ii, { "slab", name })
+		elseif string.find(name, "furniture") then
+			table.insert(ii, { "furniture", name })
+		end
+	end
+	table.sort(ii, function(a, b) return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2]) end)
+	for _, v in ipairs(ii) do
+		log.action("[%s] %s", v[1], v[2])
+	end
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
 	if not did_tool_log then
-		do_tool_log()
+		--do_tool_log()
+		do_sit_log()
 		did_tool_log = true
 	end
-	log_player_pos(user)
+	--log_player_pos(user)
 
 	if (pointed_thing.type == "node") then
 		local pos = minetest.get_pointed_thing_position(pointed_thing)
 		local node = minetest.get_node(pos)
 		local nodedef = minetest.registered_nodes[node.name]
+
 		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s",
 			minetest.pos_to_string(pos), node.name, node.param1, node.param2, minetest.get_node_light(pos))
+		if nodedef.paramtype2 == "facedir" then
+			local dir = minetest.facedir_to_dir(node.param2)
+			log.action(" ++ facedir %s rot=%d", minetest.pos_to_string(dir), bit.band(node.param2, 0x1f))
+			local mpos = vector.subtract(pos, dir) -- subtract to get in front of item
+			wayzone_utils.put_marker(mpos, "node")
+		end
 		if not is_use then
 			wayzone_utils.log_table("query_tool: node def", nodedef)
+			log.action("node def: %s", dump(nodedef))
 			log.action("drop: %s", dump(func.get_possible_drops(node.name)))
 			local md = minetest.get_meta(pos)
 			if md then

@@ -9,7 +9,7 @@ The result of a path search is either the series of states (the transition betwe
 For a 2D block-based map, we reduce the problem to a series of cells/nodes that we can occupy or not.
 The "state" is the location of the MOB in the map.
 
-We can move north, south, east, or west. If we can't move to the cell in a direction, then that is not a valid transition.
+We can move north, south, east, or west. If we can't move to and occupy the cell in a direction, then that is not a valid transition.
 
 These valid movements are called "neighbors". There is a cost associated with moving to each neighbor.
 
@@ -26,7 +26,7 @@ The simplest algorithm is as follows:
     * The collection is accessible via a get_first() method that removes the first "active" position.
     * The data item contains a few items
         * the cost to reach this position (gCost)
-        * the parent position (where we came from)
+        * the parent position (where we came from: position, direction, transition, etc)
         * whether the position is active or not
   * The loop goes as follows:
      1. Grab the first active position, removing it from the active list, but not the key/val store.
@@ -78,10 +78,12 @@ end
 
 ## Path Finding - Cost Estimate
 
-Estimating the cost of the path is important in finding the optimal path.
+Estimating the cost of the path is important in finding a good path quickly.
 
 The estimate should be the lowest possible cost. Put another way, it should be less than or equal to any possible path.
-Using hCost=0 is valid, but won't find the best path.
+It should never over-estimate the path cost.
+
+Using hCost=0 is valid, but degrades to the Dijkstra's algorithm.
 
 For example, if the lowest movement cost on the map is 10, then the estimate should use 10 per move.
 
@@ -134,13 +136,21 @@ Limit the distance between START and TARGET. Refuse to calculate the path if too
 
 Instead, blindly walk towards TARGET until START is within range.
 
+### Incremental Distance Limit
+
+If CPU time is a concern, but memory is not, then the active walkers in the open set can be paused when the distance from the current position exceeds a certain value.
+
+Alternatively, when the 'best' active walker is out of range, the MOB can move toward the best active walker. When the MOD changes position, the search can resume until the active walker is out of range again.
+
+This may cause the MOB to alternate between two ends of an obstical.
+
 ### Limit Search Space
 Put a box around the START and TARGET nodes. Don't allow walking outside those bounds.
 
 This has the problem that there may be a valid path, but it travels outside of the bounds.
 
 ### Limit the number of active walkers
-Worst case, the number of active walkers is approximately the diameter of a circle.
+Worst case, the number of active walkers is approximately the circumference of a circle. (2 * PI * R)
 
 Limit the number of active walkers to, say, 100.
 
@@ -211,7 +221,6 @@ However, there are certain nodes that are "walkable" that should be considered c
 
   * Doors
   * Gates
-
 
 A node is "standable" (meaning that a MOB can stand on it) if:
 
@@ -645,6 +654,19 @@ There are a few ways to address this:
   * Actually calculate a path between wayzone center nodes
   * Record and update an average traversal cost from wayzone to wayzone, excluding the first and last in the wzpath list
 
+### Wayzone Navigation Idea
+
+Leaving or entering a building.
+
+If the start wayzone has one exit, then follow that exit until it has mulitple exits. The first step into the wayzone that has multiple exits creates a waypoint.
+
+With the waypoint, the path is broken into two sections: START -> Waypoint -> TARGET
+
+Do the same for the target wayzone if it has one exit.
+
+Using something like Bresenham's line algo, walk straight toward to target. Add wayzones to the active list as they are encountered.
+
+If a wayzone is a "dead end", meaning it has no exit that hasn't been visited, then pick a different wayzone and try again.
 
 ---
 

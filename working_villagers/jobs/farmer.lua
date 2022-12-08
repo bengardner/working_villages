@@ -406,7 +406,8 @@ local function task_farmer_till(self)
 
 						-- face the node and start the animation
 						local dist = vector.subtract(pos, self.object:get_pos())
-						self:set_animation(working_villages.animation_frames.MINE)
+						--self:set_animation(working_villages.animation_frames.MINE)
+						self:animate("mine")
 						self:set_yaw_by_direction(dist)
 						self:delay_seconds(2)
 						-- call the on_use() method to do the deed

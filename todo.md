@@ -494,3 +494,59 @@ register task circular include loop.
 
  -- move register routines to one file
  -- ??
+
+
+# Commanding Scepter
+
+Click on ground = goto
+Click on bed = lay in bed
+Click on chair/bench = sit in chair
+
+## bed
+
+Seems to have groups.bed=1
+
+## Chair
+
+contains "_chair" or "chair_"
+ts_furniture:default_pine_wood_chair
+furniture:chair_thick_sandstone
+
+## Bench
+contains "_bench" or "bench_"
+
+# Sit on chair/bed/bench support
+
+## bed
+
+move to the node containing the bed and do set animation.
+rotate to a direction that doesn't have something blocking it.
+
+## bench
+
+move to the node containing the bench and sit. No problems with the benches I've seen.
+
+However, some benches are offset, so it would be good to find the top-center of the box and sit there.
+
+## Chair
+
+the "mesh" chairs are broken, as the collision box covers the whole node. Really need to split it.
+
+But whatever. I'll need to put the pos at y+0.5 and turn off acceleration.
+
+The "physics" check should check the animation AND containing node. Maybe save the "sitting" position in the NPC data and verify that the node is still sittable.
+
+If still sitting, it should adjust the position and rotation. (screwdriver to rotate chair while sitting?)
+
+Should also check the rotation of the bed/chair/bench and only use it if flat.
+
+### Sit verification 
+
+ - when sit_down() is called, the animation is set to SIT and the position of the sit is recorded
+ - if sitting on the ground, the position of the node ABOVE the ground is used
+ - periodically check (on_step) if we can still sit on the node.
+     - player digs out under node when sitting on ground
+     - player digs chair / bench / bed while sitting on it
+     - check the rotation and match. (screwdriver on an occupied bench/chair
+     - if the rotation axis is not +Y, then abort sit (stand_still())
+ - any movement task that causes the NPC to stand will abort the sit
