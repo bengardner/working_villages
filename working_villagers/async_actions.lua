@@ -117,8 +117,11 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 		--end
 
 		local function close_enough(v1, v2)
-			local d = vector.distance(v1, v2)
-			return d < 2
+			--local d = vector.distance(v1, v2)
+			local dx = math.abs(v2.x - v1.x)
+			local dz = math.abs(v2.z - v1.z)
+			local d2 = dx*dx + dz*dz
+			return d2 < 2
 		end
 		local function is_same_vec(v1, v2)
 			local r1 = vector.round(v1)
@@ -128,7 +131,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 		-- follow path
 		--if self:is_near({x=self.path[1].x,y=self.object:get_pos().y,z=self.path[1].z}, 1) then
 		--if self:is_near(self.path[1], 1) then
-		if is_same_vec(self.object:get_pos(), self.cur_goal) then
+		if close_enough(self.object:get_pos(), self.cur_goal) then
 			--log.action("jumping to %s", minetest.pos_to_string(self.path[1]))
 			--self.object:set_pos(self.path[1])
 			--table.remove(self.path, 1)

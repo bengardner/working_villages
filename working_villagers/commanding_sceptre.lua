@@ -13,73 +13,22 @@ end
 -- FIXME: this should be available in the "sit_down" function
 local function handle_sit(npc, pos)
 	local node = minetest.get_node(pos)
-	if bit.rshift(node.param2, 2) ~= 0 then
-		log.action("%s: CANNOT sit on %s [rot=%d] @ %s", npc.inventory_name, node.name, node.param2, minetest.pos_to_string(pos))
-		return
-	end
 	log.action("%s: sitting on %s [rot=%d] @ %s", npc.inventory_name, node.name, node.param2, minetest.pos_to_string(pos))
 	npc:task_del("wait_sit", "new target")
 	npc:task_del("wait_lay", "new target")
 
-	local rot = node.param2
-	local butt_pos = func.get_seat_pos(node.name, pos, node.param2)
-	npc.object:set_pos(butt_pos)
-	npc._sit_info = { pos=butt_pos, npos=pos, rot=rot, rotoff=0 }
-
-	local nodedef = minetest.registered_nodes[node.name]
-	if nodedef.paramtype2 == "facedir" then
-		local dir = minetest.facedir_to_dir(node.param2)
-
-		if func.is_bed(node.name) then
-			-- if this is a bed, we need to rotate around to node face a solid block
-			log.action(" ++ facedir %s", minetest.pos_to_string(dir))
-			local mpos = vector.subtract(pos, dir) -- subtract to get in front of item
-			local fnode = minetest.get_node(mpos)
-			local fndef = minetest.registered_nodes[fnode.name]
-			log.action(" ++ foot is %s walkable=%s", fnode.name, tostring(fndef.walkable))
-			if fndef.walkable and func.is_bed(node.name) then
-				npc._sit_info.rotoff = 1
-				-- rotate dir
-				dir = vector.new(dir.z, dir.y, dir.x)
-				mpos = vector.subtract(pos, dir) -- subtract to get in front of item
-				fnode = minetest.get_node(mpos)
-				fndef = minetest.registered_nodes[fnode.name]
-				if fndef.walkable then
-					dir = vector.new(-dir.x, dir.y, -dir.z)
-					npc._sit_info.rotoff = 3
-				end
-			end
-		elseif func.is_chair(node.name) then
-			-- chairs: we need to move to y +0.5 and turn off gravity, lock velocity
-		elseif func.is_bench(node.name) then
-			-- benches: find the top-center of the node and move there, same as chair
-		end
-		npc:set_yaw_by_direction(vector.subtract(vector.zero(), dir))
-		log.warning("%s: _sit_info=%s", npc.inventory_name, dump(npc._sit_info))
-	end
-
-	npc:sit_down()
+	npc:sit_down(pos)
 	npc:task_add("wait_sit", 99)
 end
 
 -- FIXME: this should be available in the "sit_down" function
 local function handle_lay(npc, pos)
 	local node = minetest.get_node(pos)
-	if bit.rshift(node.param2, 2) ~= 0 then
-		log.action("%s: CANNOT sit on %s [rot=%d] @ %s", npc.inventory_name, node.name, node.param2, minetest.pos_to_string(pos))
-		return
-	end
-	log.action("%s: sitting on %s [rot=%d] @ %s", npc.inventory_name, node.name, node.param2, minetest.pos_to_string(pos))
+	log.action("%s: laying on %s [rot=%d] @ %s", npc.inventory_name, node.name, node.param2, minetest.pos_to_string(pos))
 	npc:task_del("wait_sit", "new target")
 	npc:task_del("wait_lay", "new target")
 
-	local nodedef = minetest.registered_nodes[node.name]
-	if nodedef.paramtype2 == "facedir" then
-		local dir = minetest.facedir_to_dir(node.param2)
-		npc.object:set_pos(vector.add(pos, vector.divide(dir, 2)))
-		npc:set_yaw_by_direction(vector.subtract(vector.zero(), dir))
-	end
-
+	npc:lay_down(pos)
 	npc:task_add("wait_lay", 99)
 end
 

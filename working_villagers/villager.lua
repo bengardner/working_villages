@@ -1079,20 +1079,59 @@ function villager:stand_still()
 end
 
 -- stop moving and set the animation to SIT
-function villager:sit_down()
-	--local pos = vector.round(self.object:get_pos())
-	--if minetest.get_node(pos).name == "air" then
-	--	pos = vector.offset(pos, 0, -1, 0)
-	--	if func.is_bed()
-	--end
+function villager:sit_down(node_pos)
+	local pos = node_pos or vector.round(self.object:get_pos())
+	local butt_pos, face_dir = func.get_seat_pos(pos)
+
+	local node = minetest.get_node(pos)
+	log.action("%s: sit_down() on %s [p2=%d] @ %s node %s face %s",
+		self.inventory_name, node.name, node.param2,
+		minetest.pos_to_string(butt_pos),
+		minetest.pos_to_string(pos),
+		minetest.pos_to_string(face_dir or vector.zero()))
+
 	self.object:set_velocity{x = 0, y = 0, z = 0}
+	self.object:set_pos(butt_pos)
+	self._sit_info = { pos=butt_pos, npos=pos, name=node.name, param2=node.param2 }
+	if face_dir then
+		self:set_yaw_by_direction(face_dir)
+	end
+
 	--self:set_animation(working_villages.animation_frames.SIT)
 	self:animate("sit")
 end
 
-function villager:lay_down()
-	-- TODO: align on the bed? or find a good place to lay (grass?)
+function villager:lay_down(node_pos)
+	local pos = node_pos or vector.round(self.object:get_pos())
+	local pos, face_dir = func.get_lay_pos(pos)
+
+	if not pos then
+		return
+	end
+
+	local node = minetest.get_node(pos)
+
+	local nodedef = minetest.registered_nodes[node.name]
+	local butt_pos
+	if nodedef and nodedef.collisionbox then
+		log.action("coll adjusting butt_pos by %s", nodedef.collisionbox[5])
+		butt_pos = vector.offset(pos, 0, nodedef.collisionbox[5], 0)
+	else
+		butt_pos = vector.offset(pos, 0, 0.5, 0)
+	end
+
+	log.action("%s: lay_down() on %s [p2=%d] @ %s node %s face %s",
+		self.inventory_name, node.name, node.param2,
+		minetest.pos_to_string(butt_pos),
+		minetest.pos_to_string(pos),
+		minetest.pos_to_string(face_dir or vector.zero()))
+
 	self.object:set_velocity{x = 0, y = 0, z = 0}
+	self.object:set_pos(butt_pos)
+	self._sit_info = { pos=butt_pos, npos=pos, name=node.name, param2=node.param2 }
+	if face_dir then
+		self:set_yaw_by_direction(face_dir)
+	end
 	self:animate("lay")
 end
 
@@ -1191,41 +1230,27 @@ function villager:physics()
 		end
 	end
 
-	-- special handling for sitting and laying
-	if self._anim == "sit" then
-		local pos = self.object:get_pos()
-		local rpos = vector.round(pos)
-		local node = minetest.get_node(rpos)
-
-		-- TODO: if node is no longer a chair/bench/bed...
-
-		if not self._sit_info then
-			log.warning("%s: sit stuff: created sit_info", self.inventory_name)
-			self._sit_info = { pos=pos, npos=rpos, rot=-1 }-- force update
-		end
-
-		if bit.rshift(node.param2, 2) ~= 0 then
-			-- if the chair is not aligned on +Y, we stand up
-			self:stand_still()
-		else
-			local rotoff = self._sit_info.rotoff or 0
-			local rot = bit.band(node.param2 + rotoff, 3)
-			if self._sit_info.rot ~= rot then
-				-- TODO: sit down should populate self._sit_info = { pos, rot }
-				log.warning("%s: sit stuff: %s rot=%d off=%d p2=%d %s %s",
-					self.inventory_name,
-					node.name, rot, rotoff, node.param2,
-					minetest.pos_to_string(rpos), minetest.pos_to_string(pos))
-
-				self._sit_info.rot = rot
-				self:set_yaw_by_direction(vector.subtract(vector.zero(), minetest.facedir_to_dir(rot)))
+	--[[ special handling for sitting and laying
+	When sitting or laying down, the node on which we lay is recorded as well
+	as the rotation (param2). We also track our position when seated.
+	If any of that changes, we stand up.
+	]]
+	if self._anim == "sit" or self._anim == "lay" then
+		local si = self._sit_info
+		local stop_sit
+		if si and si.pos and si.npos and si.name and si.param2 then
+			local node = minetest.get_node(si.npos)
+			if node.name ~= si.name or si.param2 ~= node.param2 then
+				stop_sit = "node"
 			end
-			--self.object:set_pos(self._sit_info.pos)
+		else
+			stop_sit = "data"
 		end
-		-- don't want to fall to the ground through defective chairs
-		--self.object:set_acceleration{x=0, y=0, z=0}
-		--self.object:set_velocity{x=0, y=0, z=0}
-		--self.object:set_properties({collide_with_objects=false})
+		if stop_sit then
+			log.warning("%s: sit terminate %s", self.inventory_name, stop_sit)
+			self:animate("stand")
+		end
+
 	elseif self._sit_info then
 		log.warning("%s: sit stuff: cleared sit_info", self.inventory_name)
 		--self.object:set_properties({collide_with_objects=true})
@@ -1395,10 +1420,12 @@ function villager:on_step(dtime, colinfo)
 		self.isonground = colinfo.touching_ground
 		-- get the node that we are standing on
 		local logit = #colinfo.collisions > 1
+		local xxx = {}
 		for _, ci in ipairs(colinfo.collisions) do
 			if ci.type == "node" then
 				if logit then
-					log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
+					table.insert(xxx, string.format("%s-%s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis)))
+					--log.action("collide %s axis %s", minetest.pos_to_string(ci.node_pos), tostring(ci.axis))
 				end
 				if ci.axis == 'y' then
 					local rpos = vector.round(ci.node_pos)
@@ -1413,6 +1440,9 @@ function villager:on_step(dtime, colinfo)
 				end
 			end
 		end
+		if logit then
+			log.action("collide jump=%s %s", tostring(need_jump), table.concat(xxx, ","))
+		end
 	else
 		if self.lastvelocity.y==0 and vel.y==0 then
 			self.isonground = true
@@ -1421,9 +1451,9 @@ function villager:on_step(dtime, colinfo)
 		end
 	end
 	self:physics()
-
 	if need_jump then
-		vel.y = 6.5
+		vel.y = 22.5
+		--log.action(" jump vel %s on_ground=%s", minetest.pos_to_string(vel), tostring(self.isonground))
 		self.object:set_velocity(vel)
 	end
 
@@ -1496,7 +1526,7 @@ function villager:on_activate(staticdata)
 	-- parse the staticdata, and compose the inventory.
 	if staticdata == "" then
 		-- this is a new villager
-		self.manufacturing_number = working_villages.next_manufacturing_number(name)
+		self.manufacturing_number = working_villages.next_manufacturing_number(self.product_name)
 		self:create_inventory()
 	else
 		-- if static data is not empty string, this object has beed already created.
@@ -1644,13 +1674,13 @@ function villager.new(def)
 			mesh                        = def.mesh,
 			textures                    = def.textures,
 
-			--TODO: put these into working_villagers.villager
 			physical                    = true,
+			collide_with_objects        = true,
 			visual                      = "mesh",
 			visual_size                 = {x = 1, y = 1},
 			collisionbox                = {-0.25, 0, -0.25, 0.25, 1.75, 0.25},
 			pointable                   = true,
-			stepheight                  = 0.6,
+			stepheight                  = 1.5,
 			is_visible                  = true,
 			makes_footstep_sound        = true,
 			automatic_face_movement_dir = false,

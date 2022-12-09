@@ -387,6 +387,18 @@ function func.find_adjacent_pos(pos, pred)
 	return false
 end
 
+-- check the 4 adjacent positions in the x-z plane
+function func.find_adjacent_pos_xz(pos, pred)
+	-- start at 3 to skip Y
+	for idx=3,#adjacent_pos do
+		local dest_pos = vector.add(pos, adjacent_pos[idx])
+		if pred(dest_pos) then
+			return dest_pos
+		end
+	end
+	return false
+end
+
 -------------------------------------------------------------------------------
 
 -- Activating owner griefing settings departs from the documented behavior
@@ -470,7 +482,7 @@ function func.is_chest(pos)
 end
 
 --[[
-Pick an item from the 'read-only' array.
+Pick an item from the 'read-only' weighted array.
 If you change the array, remove 'total_weight' from the table.
 The value should be a table with a 'weight' field. Default 1.
 weight must be an integer
@@ -586,7 +598,22 @@ function func.resolve_item_name(item)
 end
 
 function func.is_bed(name)
-	return minetest.get_item_group(name, "bed") > 0
+	-- catch the default game notation first
+	if minetest.get_item_group(name, "bed") > 0 then
+		return true
+	end
+	-- other beds:
+	if string.find(name, "cottages:bed_") then
+		return true
+	end
+	-- worth a shot
+	if name == "cottages:straw_mat"
+	or name == "cottages:sleeping_mat_head"
+	or name == "cottages:sleeping_mat"
+	then
+		return true
+	end
+	return false
 end
 
 function func.is_stair(name)
@@ -600,50 +627,365 @@ end
 
 function func.is_bench(name)
 	-- really should bug the mod authors to add a "chair" or "bench" group
-	return string.find(name, "bench_") or string.find(name, "_bench")
+	return string.find(name, "bench_") or string.find(name, "_bench") or string.find(name, "cottages:bench")
 end
 
-local seat_adjustments = {
-	{ "furniture:chair_thick_", vector.new(0, -0.1, 0.15) },
-	{ "furniture:chair_",       vector.new(0, 0.05, 0) },
-	{ "ts_furniture:default_.*_bench", vector.new(0, 0, -0.2) },
-}
+--[[
+This adjusts the starting sit position for the MOB.
+Generally, only y and Z are set.
+Positions are relative to the node center, which works for most surfaces.
+  +Z moves towards the feet, (forward, sit on edge)
+  -Z sits furhter back
+  +X is to the right (of the MOB)
+  -X is to the left
 
-function func.get_seat_offset_or_nil(name)
-	for _, ii in ipairs(seat_adjustments) do
-		if string.match(name, ii[1]) then
-			return ii[2]
+The sitting stuff relies on collision detection to actually sit.
+We could use the collision box to find the top... then we only need Z.
+]]
+--local seat_adjustments = {
+--	{ "furniture:chair_thick_",        vector.new(0, 0, -0.15) },
+--	{ "furniture:chair_",              vector.new(0, 0.05, 0) },
+--	{ "ts_furniture:default_.*_bench", vector.new(0, 0, -0.2) },
+--	{ "cottages:bench",                vector.new(0, 0, -0.3) },
+--	{ "cottages:bed_head",             vector.new(0, 0.2, 0) },
+--	{ "cottages:bed_foot",             vector.new(0, 0.2, 0) },
+--}
+
+local cache_seat_pos = {}
+
+-- calculate the area on the XZ plane
+local function box_xz_area(box)
+	return (box[4] - box[1]) * (box[6] - box[3])
+end
+
+-- return a vector with the center - top position
+local function box_center_top(box)
+	return vector.new((box[1] + box[4]) / 2, box[5], (box[3] + box[6]) / 2)
+end
+
+--[[
+Find the best 'seat' spot based on the collision_box or node_box
+Find the box with the largest XZ area and use that as the seat.
+]]
+function func.find_seat_center(nodedef)
+	local geom
+	local function decode_geom(xbox)
+		if xbox.type == "fixed" then
+			geom = xbox.fixed
+		elseif xbox.type == "regular" then
+			geom = vector.new(0, 0.5, 0)
 		end
 	end
-	return nil
+
+	if nodedef.collision_box then
+		decode_geom(nodedef.collision_box)
+	elseif nodedef.node_box then
+		decode_geom(nodedef.node_box)
+	else
+		-- assume regular, full box
+		return vector.new(0, 0.5, 0)
+	end
+	if geom == nil or vector.check(geom) then
+		return geom
+	end
+
+	-- find the largest area
+	local best = {}
+	local function check_best(box)
+		local aa = box_xz_area(box)
+		if not best.area or aa > best.area or (aa == best.area and box[5] > best.abox[5]) then
+			best.abox = box
+			best.area = aa
+		end
+	end
+
+	if #geom > 0 and type(geom[1]) == "number" then
+		check_best(geom)
+	else
+		for _, box in ipairs(geom) do
+			check_best(box)
+		end
+	end
+	if not best.abox then
+		return nil
+	end
+	return box_center_top(best.abox)
 end
 
 function func.get_seat_offset(name)
-	return func.get_seat_offset_or_nil(name) or vector.zero()
+	local pos = cache_seat_pos[name]
+	if pos == nil then
+		local nodedef = minetest.registered_nodes[name]
+		if nodedef then
+			pos = func.find_seat_center(nodedef)
+			if pos then
+				cache_seat_pos[name] = pos
+				return pos
+			end
+		end
+		cache_seat_pos[name] = true -- tried, but failed
+	end
+	if vector.check(pos) then
+		return vector.new(pos.x, pos.y, -pos.z)
+	end
+	return vector.zero()
 end
 
 -- rotate @vec based on dir, which should be from 0 to 3
 function func.rotate_facedir(vec, dir)
-	if dir == 1 then -- 90 deg?
+	if dir == 3 then -- -90 deg
 		return vector.new(-vec.z, vec.y, vec.x)
-	elseif dir == 2 then -- 180 deg?
+	elseif dir == 2 then -- 180 deg
 		return vector.new(-vec.x, vec.y, -vec.z)
-	elseif dir == 3 then -- -90 deg?
+	elseif dir == 1 then -- 90 deg
 		return vector.new(vec.z, vec.y, -vec.x)
 	else
-		return vec -- 0 degrees
+		return vec -- 0 degrees, not change
 	end
 end
 
--- get the seat position for @name, NPC @pos, @dir is low 2 bits of facedir
-function func.get_seat_pos(name, pos, dir)
-	local vec = func.get_seat_offset_or_nil(name)
-	if not vec then
-		return pos
+--[[
+Get the seat position and facing direction for a node.
+@node_pos is supposed to be the rounded position of the MOB, which is the node
+that contains the legs.
+
+The node could be air, in which case, we sit in air and fall down to ground level.
+The node may contain a chair/bench, in which case we will sit with a potential
+adjustment to the butt position. The NPC will fall and hopefully collide with
+the chair.
+If the node is a bed, then we need to sit sideways on it, depending on which side
+of the bed is clear.
+@return butt_pos, face_dir
+
+NOTE: face_dir is nil if it doesn't matter (don't set the MOB facing direction)
+If not nil, then call "self:set_yaw_by_direction(face_dir)"
+]]
+function func.get_seat_pos(node_pos)
+	local node = minetest.get_node(node_pos)
+	local butt_pos = node_pos
+
+	-- Not collidable, so we are sitting on the node below
+	if not pathfinder.is_node_collidable(node) then
+		return butt_pos, nil
 	end
-	local res = vector.add(pos, func.rotate_facedir(vec, dir))
-	log.action("get_seat_pos: %s %s %d => %s %s", name, minetest.pos_to_string(pos), dir, minetest.pos_to_string(vec), minetest.pos_to_string(res))
+
+	-- See if we may need to set face_dir
+	local nodedef = minetest.registered_nodes[node.name]
+	if nodedef.paramtype2 ~= "facedir" or bit.band(node.param2, 0x1c) ~= 0 then
+		-- sit above the node, as the MOB will fall on it
+		butt_pos.y = butt_pos.y + 1
+		return butt_pos, nil
+	end
+
+	-- flip 180 degrees so that this is the offset of the FEET
+	local feet_p2  = bit.band(node.param2 + 2, 3)
+	local face_dir = minetest.facedir_to_dir(feet_p2)
+
+	local vec = func.get_seat_offset(node.name)
+	butt_pos = vector.add(butt_pos, func.rotate_facedir(vec, feet_p2))
+	local is_bed = func.is_bed(node.name)
+	--log.action("func.get_seat_pos: node_pos=%s butt_pos=%s face_dir=%s is_bed=%s",
+	--	minetest.pos_to_string(node_pos),
+	--	minetest.pos_to_string(butt_pos),
+	--	minetest.pos_to_string(face_dir), tostring(is_bed))
+
+	if is_bed then
+		-- rotate 90 and calc the foot-node pos (right side, bottom)
+		face_dir = func.rotate_facedir(face_dir, 1)
+		local fpos = vector.add(node_pos, face_dir)
+		if not pathfinder.is_node_collidable(fpos) then
+			return butt_pos, face_dir
+		end
+		-- rotate 180 and try again (left side, bottom)
+		face_dir = func.rotate_facedir(face_dir, 2)
+		fpos = vector.add(node_pos, face_dir)
+		if not pathfinder.is_node_collidable(fpos) then
+			--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+			return butt_pos, face_dir
+		end
+		--log.action(" -- %s %s IS collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		-- rotate 90 and try again (bottom side)
+		face_dir = func.rotate_facedir(face_dir, 1)
+		fpos = vector.add(node_pos, face_dir)
+		if not pathfinder.is_node_collidable(fpos) then
+			--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+			return butt_pos, face_dir
+		end
+		--log.action(" -- %s %s IS collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		-- TODO: find the "top" part of the bed and try left/right from there
+	end
+
+	return butt_pos, face_dir
+end
+
+local bed_head_tail = {
+	-- these should have been registered with beds.register_bed()
+	{ head="cottages:bed_head", tail="cottages:bed_foot" },
+	{ head="cottages:sleeping_mat_head", tail="cottages:sleeping_mat" },
+	-- this is not really a bed, but I wanted to try it
+	{ head="cottages:straw_mat", tail="cottages:straw_mat", anydir=true },
+}
+
+local function find_adjacent_name(pos, name)
+	local res = {}
+	local dir = vector.new(1, 0, 0)
+	-- start at 3 to skip y
+	for _=3,#adjacent_pos do
+		local apos = vector.add(pos, dir)
+		local node = minetest.get_node(apos)
+		if node.name == name then
+			table.insert(res, apos)
+		end
+		dir = func.rotate_facedir(dir, 1)
+	end
 	return res
 end
 
+--[[
+Find the bottom and top of the bed. The head goes on the top_pos node.
+This would be really easy.. if.. beds.register()
+@return bot_pos, top_pos
+]]
+local function bed_find_node_pos(pos)
+	local node = minetest.get_node(pos)
+	if not func.is_bed(node.name) then
+		--log.action("bed_find_node_pos: not bed h=%s", node.name)
+		return nil, nil
+	end
+
+	local dir = minetest.facedir_to_dir(node.param2)
+	--log.action("bed_find_node_pos: %s h=%s d=%s",
+	--	minetest.pos_to_string(pos), node.name, minetest.pos_to_string(dir))
+	for _, ii in ipairs(bed_head_tail) do
+		-- special handling for old, broken bed stuff
+		if node.name == ii.head then
+			local bot_pos = vector.subtract(pos, dir)
+			local bot_node = minetest.get_node(bot_pos)
+			--log.action("bed_find_node_pos: try %s h=%s b=%s",
+			--	minetest.pos_to_string(bot_pos),
+			--	node.name, bot_node.name)
+			if bot_node.name == ii.tail then
+				--log.action("bed_find_node_pos: table h=%s b=%s", node.name, bot_node.name)
+				return bot_pos, pos
+			end
+			if ii.anydir then
+				for _=1,3 do
+					dir = func.rotate_facedir(dir, 1)
+					bot_pos = vector.subtract(pos, dir)
+					bot_node = minetest.get_node(bot_pos)
+					--log.action("bed_find_node_pos: anydir try %s h=%s b=%s",
+					--	minetest.pos_to_string(bot_pos),
+					--	node.name, bot_node.name)
+					if bot_node.name == ii.tail then
+						--log.action("bed_find_node_pos: anydir h=%s b=%s", node.name, bot_node.name)
+						return bot_pos, pos
+					end
+				end
+			end
+			--log.action("bed_find_node_pos: no tail h=%s b=%s", node.name, bot_node.name)
+			return nil
+
+		elseif node.name == ii.tail then
+			-- find the associated head node
+			for _, hpos in ipairs(find_adjacent_name(pos, ii.head)) do
+				local hnode = minetest.get_node(hpos)
+				if hnode.name == ii.head then
+					-- FIXME: should make sure the head node points to the bottom
+					--log.action("bed_find_node_pos: backwards h=%s b=%s", hnode.name, node.name)
+					return pos, hpos
+				end
+			end
+		end
+	end
+
+	-- explicitly disallow stray nodes
+	for _, ii in ipairs(bed_head_tail) do
+		if node.name == ii.head or node.name == ii.tail then
+			--log.action("bed_find_node_pos: NO-stray h=%s", node.name)
+			return nil
+		end
+	end
+
+	-- default beds are OK, as we can only select the head/top
+	--log.action("bed_find_node_pos: default h=%s", node.name)
+	return pos, vector.add(pos, dir)
+end
+
+--[[
+Lay down on the node at node_pos.
+Better be a bed of some sort.
+TODO: handle non-bed surfaces, like ground. Both nodes have to be the same height.
+
+@return butt_pos, face_pos
+
+NOTE: butt_pos is nil if we can't lay down at node_pos
+NOTE: face_pos is nil if it doesn't matter which way we align.
+]]
+function func.get_lay_pos(node_pos)
+	--log.warning("get_lay_pos: %s", minetest.pos_to_string(node_pos))
+	-- shift pos to the bed bottom if we are on a bed top
+	local bot_pos, top_pos = bed_find_node_pos(node_pos)
+	if not (bot_pos and top_pos) then
+		log.action("get_lay_pos: not a bed %s", minetest.pos_to_string(node_pos))
+		return nil, nil
+	end
+
+	local face_dir = vector.subtract(bot_pos, top_pos)
+	local node = minetest.get_node(bot_pos)
+	local butt_pos = bot_pos
+
+	--log.warning("get_lay_pos: bot=%s top=%s dir=%s",
+	--	minetest.pos_to_string(bot_pos),
+	--	minetest.pos_to_string(top_pos),
+	--	minetest.pos_to_string(face_dir))
+
+	-- See if we may need to set face_dir
+	local nodedef = minetest.registered_nodes[node.name]
+	if not nodedef or nodedef.paramtype2 ~= "facedir" or bit.band(node.param2, 0x1c) ~= 0 then
+		return nil
+	end
+
+	-- shift a bit towards the head of the bed
+	return vector.subtract(butt_pos, vector.multiply(face_dir, 0.4)), face_dir
+end
+
+--[[
+Find the top-center of the box.
+]]
+function func.box_top_center(box)
+	-- box = { x1, y1, z1, x2, y2, z2 }
+	local function find_top_center(box)
+		if box[1] > 0.2 or box[3] > 0.2 or box[4] < 0.2 or box[6] < 0.2 then
+			return nil
+		else
+			return box
+		end
+	end
+
+	local function log_center_top(def)
+		local geom
+		if def.collision_box and def.collision_box.type == "fixed" then
+			geom = def.collision_box.fixed
+		elseif def.node_box and def.node_box.type == "fixed" then
+			geom = def.node_box.fixed
+		end
+		if not geom then
+			return
+		end
+		log.warning("geom %s", dump(geom))
+		local y_max
+		if #geom > 0 and type(geom[1]) == "table" then
+			-- nest table
+			for _, box in ipairs(geom) do
+				local yt = find_top_center(box)
+				if yt and (not y_max or yt > y_max) then
+					y_max = yt
+				end
+			end
+		else
+			y_max = find_top_center(geom)
+		end
+		log.warning("geom max_y=%s for %s", tostring(y_max), dump(geom))
+	end
+end
 return func

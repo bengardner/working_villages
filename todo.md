@@ -522,6 +522,8 @@ contains "_bench" or "bench_"
 move to the node containing the bed and do set animation.
 rotate to a direction that doesn't have something blocking it.
 
+DONE!
+
 ## bench
 
 move to the node containing the bench and sit. No problems with the benches I've seen.
@@ -540,7 +542,7 @@ If still sitting, it should adjust the position and rotation. (screwdriver to ro
 
 Should also check the rotation of the bed/chair/bench and only use it if flat.
 
-### Sit verification 
+### Sit & Lay verification
 
  - when sit_down() is called, the animation is set to SIT and the position of the sit is recorded
  - if sitting on the ground, the position of the node ABOVE the ground is used
@@ -550,3 +552,13 @@ Should also check the rotation of the bed/chair/bench and only use it if flat.
      - check the rotation and match. (screwdriver on an occupied bench/chair
      - if the rotation axis is not +Y, then abort sit (stand_still())
  - any movement task that causes the NPC to stand will abort the sit
+ - and finally, we need to save basic state so that it is restored on restart (?)
+     - sitting on POS
+     - laying on POS
+
+
+# Movement is completely broken in snow!
+
+The pathfinder logic is finding a path ABOVE the partial snow block.
+
+Had to set stepheight to 1.5 to get it to work. Should probably be 1.1 or so.

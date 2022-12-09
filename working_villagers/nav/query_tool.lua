@@ -199,6 +199,13 @@ local function do_sit_log()
 	end
 end
 
+local function log_center_top(def)
+	local pos = func.find_seat_center(def)
+	if pos then
+		log.warning("top_center %s", minetest.pos_to_string(pos))
+	end
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
 	if not did_tool_log then
 		--do_tool_log()
@@ -223,6 +230,7 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		if not is_use then
 			wayzone_utils.log_table("query_tool: node def", nodedef)
 			log.action("node def: %s", dump(nodedef))
+			log_center_top(nodedef)
 			log.action("drop: %s", dump(func.get_possible_drops(node.name)))
 			local md = minetest.get_meta(pos)
 			if md then

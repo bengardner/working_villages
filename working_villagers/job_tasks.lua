@@ -235,7 +235,7 @@ local function task_wait_lay(self)
 	log.action("%s: I am waiting for %s seconds", self.inventory_name, sec_left)
 	self:set_displayed_action("waiting")
 	while sec_left > 0 do
-		self:lay_down()
+		--self:lay_down()
 		local ds = math.max(1, sec_left)
 		self:delay_seconds(ds)
 		sec_left = sec_left - ds
@@ -378,7 +378,7 @@ function tasks.schedule_check(self)
 	local dow_mask = bit.lshift(1, dow)
 	local tod = minetest.get_timeofday() * 24.0
 
-	log.action("%s: dow=%d tod=%.2f", self.inventory_name, dow, tod)
+	--log.action("%s: dow=%d tod=%.2f", self.inventory_name, dow, tod)
 
 	--[[
 	First pass to update self.job_data.schedule_state[], which can have 4 values:
@@ -456,7 +456,7 @@ function tasks.schedule_check(self)
 		if info.check then
 			if state == "yes" or state == "end" then
 				local active = (state == "yes")
-				log.action("%s: schedule check(%s, %s)", self.inventory_name, name, tostring(active))
+				--log.action("%s: schedule check(%s, %s)", self.inventory_name, name, tostring(active))
 				info.check(self, name, active)
 			end
 		end

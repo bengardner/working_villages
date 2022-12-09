@@ -1019,7 +1019,7 @@ function wayzone_store:round_position(pos)
 	-- 2. If over air, we need to shift a bit to over a neighbor node
 	local bpos = vector.new(rpos.x, rpos.y-1, rpos.z)
 	local node = minetest.get_node(bpos)
-	if not minetest.registered_nodes[node.name].walkable then
+	if pathfinder.is_node_collidable(node) then
 		local ret = {}
 		local function try_dpos(dpos)
 			if ret.pos ~= nil then
@@ -1028,9 +1028,9 @@ function wayzone_store:round_position(pos)
 			local tpos = vector.add(rpos, dpos)
 			--log.action("trying %s for %s", minetest.pos_to_string(tpos), pos)
 			node = minetest.get_node(tpos)
-			if not minetest.registered_nodes[node.name].walkable then
+			if not pathfinder.is_node_collidable(node) then
 				node = minetest.get_node(vector.new(tpos.x, tpos.y - 1, tpos.z))
-				if minetest.registered_nodes[node.name].walkable then
+				if pathfinder.is_node_collidable(node) then
 					ret.pos = tpos
 					return true
 				end
@@ -1103,7 +1103,7 @@ end
 
 local function wayzone_store_on_dignode(pos, oldnode, digger)
 	local old_nodedef = minetest.registered_nodes[oldnode.name]
-	local imp = old_nodedef.walkable or old_nodedef.climbable
+	local imp = not old_nodedef or old_nodedef.walkable or old_nodedef.climbable
 	log.action("wayzones: node %s removed from %s important=%s",
 		oldnode.name, minetest.pos_to_string(pos), tostring(imp))
 	if imp then
