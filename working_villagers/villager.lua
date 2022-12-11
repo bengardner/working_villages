@@ -797,8 +797,9 @@ function villager:jump()
 	if below_node.name == "air" then
 		return false
 	end
+	log.action("%s: Jumping", self.inventory_name)
 	--local jump_force = math.sqrt(self.initial_properties.weight) * 1.5
-	local jump_force = -func.gravity * 1.5
+	local jump_force = 22 -- -func.gravity * 1.5
 	if minetest.get_item_group(below_node.name,"liquid") > 0 then
 		local viscosity = minetest.registered_nodes[below_node.name].liquid_viscosity
 		jump_force = jump_force/(viscosity*100)
@@ -839,6 +840,7 @@ function villager:handle_obstacles(ignore_fence, ignore_doors)
 			end
 		elseif minetest.registered_nodes[front_node.name].walkable
 		and not(minetest.registered_nodes[above_node.name].walkable) then
+			log.action("%s: need jump? vel=%s", self.inventory_name, minetest.pos_to_string(velocity))
 			if velocity.y == 0 then
 				local nBox = minetest.registered_nodes[front_node.name].node_box
 				if (nBox == nil) then
@@ -849,11 +851,12 @@ function villager:handle_obstacles(ignore_fence, ignore_doors)
 				if type(nBox[1])=="number" then
 					nBox = {nBox}
 				end
+				log.action(" nBox=%s", dump(nBox))
 				for _,box in pairs(nBox) do --TODO: check rotation of the nodebox
 					local nHeight = (box[5] - box[2]) + front_pos.y
-					if nHeight > self.object:get_pos().y + .5 then
-						self:jump()
-					end
+					--if nHeight > self.object:get_pos().y + .5 then
+						--self:jump()
+					--end
 				end
 			end
 		end
@@ -1078,32 +1081,140 @@ function villager:stand_still()
 	self:animate("stand")
 end
 
+function get_villagers_around_node(node_pos, exclude_inv_name)
+	local minp = vector.new(node_pos.x - 1.5, node_pos.y - 1.5, node_pos.z - 1.5)
+	local maxp = vector.new(node_pos.x + 1.5, node_pos.y + 2, node_pos.z + 1.5)
+	local objs = minetest.get_objects_in_area(minp, maxp)
+
+	local occupiers = {} -- key=inventory_name, val=lua_entity
+	local blockages = {} -- key=node_pos hash, val=lua_entity
+	--log.action("get_villagers_around_node: %s - %s count=%d",
+	--	minetest.pos_to_string(minp), minetest.pos_to_string(maxp), #objs)
+	for idx, obj in ipairs(objs) do
+		local ent = obj:get_luaentity()
+		if ent and working_villages.is_villager(ent.name) then
+			if not exclude_inv_name or ent.inventory_name ~= exclude_inv_name then
+				local hash = minetest.hash_node_position(vector.round(obj:get_pos()))
+				occupiers[ent.inventory_name] = ent
+				blockages[hash] = ent
+				--log.action(" -- [%d] %s @ %s", idx, ent.inventory_name, minetest.pos_to_string(obj:get_pos()))
+			end
+		end
+	end
+	return occupiers, blockages
+end
+
+
+-- See which villagers are in a 3x3x3 node zone centered on node_pos.
+-- This is used to avoid sitting in the same seat or on the same spot on the bed.
+function villager:node_occupiers_around(node_pos)
+	local minp = vector.new(node_pos.x - 1.5, node_pos.y - 1.5, node_pos.z - 1.5)
+	local maxp = vector.new(node_pos.x + 1.5, node_pos.y + 1.5, node_pos.z + 1.5)
+	local objs = minetest.get_objects_in_area(minp, maxp)
+
+	local occupiers = {} -- key=inventory_name, val=lua_entity
+	log.action("node_occupiers: %s - %s",
+		minetest.pos_to_string(minp), minetest.pos_to_string(maxp))
+	for idx, obj in ipairs(objs) do
+		local ent = obj:get_luaentity()
+		if working_villages.is_villager(ent.name) and ent.inventory_name ~= self.inventory_name then
+			occupiers[ent.inventory_name] = ent
+			log.action(" -- [%d] %s @ %s", idx, ent.inventory_name, minetest.pos_to_string(obj:get_pos()))
+		end
+	end
+	return occupiers
+end
+
+local function is_occupied(occupiers)
+end
+
 -- stop moving and set the animation to SIT
 function villager:sit_down(node_pos)
-	local pos = node_pos or vector.round(self.object:get_pos())
-	local butt_pos, face_dir = func.get_seat_pos(pos)
+	log.warning("%s: called sit_down() %s",
+		self.inventory_name, minetest.pos_to_string(node_pos or vector.zero()))
 
-	local node = minetest.get_node(pos)
-	log.action("%s: sit_down() on %s [p2=%d] @ %s node %s face %s",
-		self.inventory_name, node.name, node.param2,
-		minetest.pos_to_string(butt_pos),
-		minetest.pos_to_string(pos),
-		minetest.pos_to_string(face_dir or vector.zero()))
+	if self._anim == "sit" then
+		log.warning("%s: already sitting @ %s",
+			self.inventory_name, minetest.pos_to_string(self.object:get_pos()))
+		return false, "already sitting"
+	end
+	-- TODO: make sure we are close enough
+	--if node_pos and not close enough then walk to the location
 
-	self.object:set_velocity{x = 0, y = 0, z = 0}
-	self.object:set_pos(butt_pos)
-	self._sit_info = { pos=butt_pos, npos=pos, name=node.name, param2=node.param2 }
-	if face_dir then
-		self:set_yaw_by_direction(face_dir)
+	node_pos = node_pos or vector.round(self.object:get_pos())
+
+	-- get all possible sitting positions based on the node_pos
+	local seats = func.get_seat_pos(node_pos)
+
+	for idx, seat in ipairs(seats) do
+		local node = minetest.get_node(seat.pos)
+		log.action("%s: sit_down() [%d] on %s @ %s node %s feet %s",
+			self.inventory_name, idx, node.name,
+			minetest.pos_to_string(seat.pos),
+			minetest.pos_to_string(seat.npos),
+			minetest.pos_to_string(seat.footvec or vector.zero()))
 	end
 
-	--self:set_animation(working_villages.animation_frames.SIT)
-	self:animate("sit")
+	-- get villagers around the target to see if it is free
+	local occ, hsh = get_villagers_around_node(node_pos, self.inventory_name)
+	--for hash, ent in pairs(hsh) do
+	--	local pp = minetest.get_position_from_hash(hash)
+	--	log.warning("%s: %12x nearby %s @ %s %s", self.inventory_name, hash, ent.inventory_name,
+	--		minetest.pos_to_string(pp),
+	--		minetest.pos_to_string(ent.object:get_pos()))
+	--end
+
+	-- try all the sitting positions
+	for _, seat in ipairs(seats) do
+		local above = vector.offset(seat.npos, 0, 1, 0)
+		log.action("%s: trying seat @ %s butt=%s feet=%s",
+			self.inventory_name, minetest.pos_to_string(seat.npos),
+			minetest.pos_to_string(seat.pos),
+			minetest.pos_to_string(seat.footvec or vector.zero()))
+		if pathfinder.is_node_collidable(above) then
+			log.warning("%s: cannot sit_down @ %s, as node above is %s",
+				self.inventory_name, minetest.pos_to_string(node_pos), minetest.get_node(above).name)
+		else
+			-- make sure the seat isn't blocked
+			local hash = minetest.hash_node_position(seat.npos)
+			log.action(" -- checking hash %12x %s", hash, minetest.pos_to_string(seat.npos))
+			if hsh[hash] ~= nil then
+				log.warning("%s: cannot sit_down @ %s, as %s is there",
+					self.inventory_name, minetest.pos_to_string(seat.npos), hsh[hash].inventory_name)
+			else
+				self.object:set_velocity{x = 0, y = 0, z = 0}
+				self.object:set_pos(seat.pos)
+				local node = minetest.get_node(seat.npos)
+				self._sit_info = { pos=seat.pos, npos=seat.npos, name=node.name, param2=node.param2 }
+				if seat.footvec then
+					self:set_yaw_by_direction(seat.footvec)
+				end
+				self:animate("sit")
+				return true
+			end
+		end
+	end
+
+
+	for invname, luae in pairs(occ) do
+		log.warning("%s: cannot sit_down @ %s, as %s is there",
+			self.inventory_name, minetest.pos_to_string(node_pos), invname)
+		return false, "object blocking"
+	end
+
+	return false, "invalid position"
 end
 
 function villager:lay_down(node_pos)
-	local pos = node_pos or vector.round(self.object:get_pos())
-	local pos, face_dir = func.get_lay_pos(pos)
+	node_pos = node_pos or vector.round(self.object:get_pos())
+	local pos, face_dir = func.get_lay_pos(node_pos)
+
+	local occ = get_villagers_around_node(node_pos, self.inventory_name)
+	for invname, luae in pairs(occ) do
+		log.warning("%s: cannot lay_down @ %s, as %s is there",
+			self.inventory_name, minetest.pos_to_string(node_pos), invname)
+		return false, "object blocking"
+	end
 
 	if not pos then
 		return
@@ -1701,7 +1812,7 @@ function villager.new(def)
 		},
 
 		-- extra initial properties
-		weight                      = def.weight, -- ??
+		weight                      = def.weight, -- ?? what is this for ??
 		max_hp                      = def.hp_max or 10,
 
 		pause                       = false,

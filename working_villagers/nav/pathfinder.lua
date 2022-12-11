@@ -60,13 +60,19 @@ If it over-estimates the cost, we won't get an optimal path.
 
 As end_pos may be an area, this can overestimate the cost. However, that
 shouldn't matter, as the path ends as soon as the walker hits the end area.
+
+Base cost is 10 for a N/S/E/W move and 14 for diagonals.
+Note that we ignore the Y component in these calculations.
 --]]
 local function get_estimated_cost(start_pos, end_pos)
 	if false then
 		return 1
 	elseif true then
-		return vector.distance(start_pos, end_pos) * 10
+		-- this tends to give straight walking paths
+		return vector.distance(vector.new(start_pos.x, 0, start_pos.z),
+		                       vector.new(end_pos.x, 0, end_pos.z)) * 10
 	else
+		-- this favors early diagonals followed by X-Z lines.
 		local distX = math.abs(start_pos.x - end_pos.x)
 		local distZ = math.abs(start_pos.z - end_pos.z)
 
@@ -1267,7 +1273,7 @@ is > jump_height).
    minp/maxp are vectors for the min/max corners of the area.
 @args may contain height, jump_height and fear_height. defaults are 2, 1, 2.
 @debug is a verbosity indicator 0=none (default), 1+=log stuff
-@return visited_nodes, exit_nodes
+@return visited_nodes, exit_nodes, flags, edges
 --]]
 function pathfinder.wayzone_flood(start_pos, area, debug)
 	assert(start_pos ~= nil and start_pos.x ~= nil and start_pos.y ~= nil and start_pos.z ~= nil)
@@ -1344,7 +1350,7 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 			end
 		end
 	end
-	return visitedSet, exitSet, flags
+	return visitedSet, exitSet, flags, {}
 end
 
 -------------------------------------------------------------------------------
@@ -1440,5 +1446,46 @@ local function node_check(pos)
 end
 
 pathfinder.node_check = node_check
+
+--[[
+Examine a node and return:
+ - the global Y position of the node top
+ - whether the node is full (cannot be in it) 1=full, 0=not full, -1=liquid
+ - whether the node is covered in liquid (true/false)
+Or return nil if the node is invalid.
+]]
+function pathfinder.get_node_height(pos)
+	local npos = vector.round(pos)
+	local node = minetest.get_node(npos)
+	local nodedef = minetest.registered_nodes[node.name]
+	if nodedef == nil then
+		return nil
+	end
+
+	if nodedef.walkable then
+		if nodedef.drawtype == 'nodebox' then
+			if nodedef.node_box and nodedef.node_box.type == 'fixed' then
+				if type(nodedef.node_box.fixed[1]) == 'number' then
+					return npos.y + nodedef.node_box.fixed[5] ,0, false
+				elseif type(nodedef.node_box.fixed[1]) == 'table' then
+					return npos.y + nodedef.node_box.fixed[1][5], 0, false
+				else
+					-- TODO: handle table of boxes
+					return npos.y + 0.5, 1, false
+				end
+			elseif nodedef.node_box and nodedef.node_box.type == 'leveled' then
+				return minetest.get_node_level(npos) / 64 + npos.y - 0.5, 0, false
+			else
+				-- assume type="regular" or "connected", covers the full node
+				return npos.y + 0.5, 1, false
+			end
+		else
+			-- assume full node (type=regular)
+			return npos.y + 0.5, 1, false
+		end
+	else
+		return npos.y - 0.5, -1, (node.drawtype == 'liquid')
+	end
+end
 
 return pathfinder

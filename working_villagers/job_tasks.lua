@@ -230,6 +230,15 @@ local function task_wait_sit(self)
 end
 working_villages.register_task("wait_sit", { func = task_wait_sit, priority = 10 })
 
+local function task_work_break(self)
+	local sec_left = self.task_data.wait_seconds or 10
+	log.action("%s: break time! for %s seconds", self.inventory_name, sec_left)
+	self:set_displayed_action("waiting")
+	tasks.schedule_done(self, "work_break")
+	return true
+end
+working_villages.register_task("work_break", { func = task_work_break, priority = 10 })
+
 local function task_wait_lay(self)
 	local sec_left = self.task_data.wait_seconds or 30
 	log.action("%s: I am waiting for %s seconds", self.inventory_name, sec_left)

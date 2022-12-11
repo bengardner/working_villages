@@ -202,14 +202,15 @@ end
 local function log_center_top(def)
 	local pos = func.find_seat_center(def)
 	if pos then
-		log.warning("top_center %s", minetest.pos_to_string(pos))
+		local height = pos.y + 0.5
+		log.warning("top_center %s h=%s", minetest.pos_to_string(pos), height)
 	end
 end
 
 local function query_tool_do_stuff(user, pointed_thing, is_use)
 	if not did_tool_log then
 		--do_tool_log()
-		do_sit_log()
+		--do_sit_log()
 		did_tool_log = true
 	end
 	--log_player_pos(user)

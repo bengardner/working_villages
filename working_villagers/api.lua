@@ -69,7 +69,7 @@ end
 
 -- working_villages.is_villager reports whether a name is villager's name.
 function working_villages.is_villager(name)
-	if working_villages.registered_villagers[name] then
+	if name and working_villages.registered_villagers[name] then
 		return true
 	end
 	return false

@@ -1,6 +1,7 @@
 local func = {}
 local pathfinder = working_villages.require("nav/pathfinder")
 local log = working_villages.require("log")
+local rotate = working_villages.require("nav/rotate")
 
 -- used in the physics stuff copied from mobkit
 func.gravity = -9.8
@@ -652,6 +653,7 @@ We could use the collision box to find the top... then we only need Z.
 --}
 
 local cache_seat_pos = {}
+local cache_node_height = {}
 
 -- calculate the area on the XZ plane
 local function box_xz_area(box)
@@ -731,23 +733,128 @@ function func.get_seat_offset(name)
 	return vector.zero()
 end
 
--- rotate @vec based on dir, which should be from 0 to 3
-function func.rotate_facedir(vec, dir)
-	if dir == 3 then -- -90 deg
-		return vector.new(-vec.z, vec.y, vec.x)
-	elseif dir == 2 then -- 180 deg
-		return vector.new(-vec.x, vec.y, -vec.z)
-	elseif dir == 1 then -- 90 deg
-		return vector.new(vec.z, vec.y, -vec.x)
-	else
-		return vec -- 0 degrees, not change
+--[[
+Reduces an array of boxes to the min/max of all.
+If @boxes[1] is a number, this returns @boxes unaltered.
+Returns nil if @boxes is not a table or it is an empty array.
+]]
+function func.box_minmax(boxes)
+	if type(boxes) ~= "table" or #boxes == 0 then
+		return nil
 	end
+	if type(boxes[1]) == "number" then
+		return boxes
+	end
+	local nb = table.copy(boxes[1])
+	for idx=2, #box do
+		local bb = boxes[idx]
+		for ii=1,3 do
+			nb[ii] = math.min(nb[ii], bb[ii])
+			nb[ii+3] = math.max(nb[ii+3], bb[ii+3])
+		end
+	end
+	return nb
 end
+
+local function get_full_node_box()
+	return {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5}
+end
+
+--[[
+Get a rotated collision box.
+returns:
+ - nil if no collision box info available
+ - or a collision box and param2. param2 should be nil if not used.
+]]
+function func.nodedef_get_collision_box(nodedef, param2)
+	-- check for no collisions first
+	if not nodedef.walkable then
+		return nil
+	end
+
+	-- collision_box and node_box are processed the same
+	local function proc_box(cbox)
+		if cbox.type == "fixed" then
+			local box = func.box_minmax(cbox.fixed)
+			local p2
+			if nodedef.paramtype2 == "facedir" or nodedef.paramtype2 == "colorfacedir" then
+				p2 = bit.band(param2, 0x1f)
+				box = rotate.box_facedir(box, p2)
+			end
+			return box, p2
+		elseif cbox.type == "leveled" and nodedef.paramtype2 == "leveled" then
+			local box = func.box_minmax(cbox.fixed)
+			box[2] = -0.5
+			box[5] = param2 / 64 - 0.5
+			return box, param2
+		else
+			return get_full_node_box()
+		end
+	end
+
+	-- collision_box takes priority
+	if nodedef.collision_box then
+		return proc_box(nodedef.collision_box)
+	end
+
+	if nodedef.drawtype == 'nodebox' then
+		return proc_box(nodedef.node_box)
+	end
+
+	-- unknown, assume full node
+	return get_full_node_box()
+end
+
+--[[
+Grab some node information.
+Returns:
+ - top Y position (0..1) of any nodebox in the node
+ - full node: 0=can stand in it, 1=fully occupied, -1=water
+ - liquid flag: true=node is liquid, false=not liquid
+
+NOTE: this uses node.param2 if paramtype2 one of "leveled", "colorfacedir", "facedir".
+]]
+-- function func.get_node_height(node)
+-- 	local npos = vector.round(pos)
+-- 	local node = minetest.get_node(npos)
+-- 	local nodedef = minetest.registered_nodes[node.name]
+-- 	if nodedef == nil then
+-- 		return nil
+-- 	end
+--
+-- 	if nodedef.walkable then
+-- 		if nodedef.drawtype == 'nodebox' then
+-- 			if nodedef.node_box and nodedef.node_box.type == 'fixed' then
+-- 				local box = func.nodedef_get_box(nodedef, node.param2)
+-- 				return npos.y + box[5], 0, false
+--
+-- 				if type(nodedef.node_box.fixed[1]) == 'number' then
+-- 					return npos.y + nodedef.node_box.fixed[5], 0, false
+-- 				elseif type(nodedef.node_box.fixed[1]) == 'table' then
+-- 					return npos.y + nodedef.node_box.fixed[1][5], 0, false
+-- 				else
+-- 					-- TODO: handle table of boxes
+-- 					return npos.y + 0.5, 1, false
+-- 				end
+-- 			elseif nodedef.node_box and nodedef.node_box.type == 'leveled' then
+-- 				return minetest.get_node_level(npos) / 64 + npos.y - 0.5, 0, false
+-- 			else
+-- 				-- assume type="regular" or "connected", covers the full node
+-- 				return npos.y + 0.5, 1, false
+-- 			end
+-- 		else
+-- 			-- assume full node (type=regular)
+-- 			return npos.y + 0.5, 1, false
+-- 		end
+-- 	else
+-- 		return npos.y - 0.5, -1, (node.drawtype == 'liquid')
+-- 	end
+-- end
 
 --[[
 Get the seat position and facing direction for a node.
 @node_pos is supposed to be the rounded position of the MOB, which is the node
-that contains the legs.
+that contains the legs when standing.
 
 The node could be air, in which case, we sit in air and fall down to ground level.
 The node may contain a chair/bench, in which case we will sit with a potential
@@ -755,7 +862,16 @@ adjustment to the butt position. The NPC will fall and hopefully collide with
 the chair.
 If the node is a bed, then we need to sit sideways on it, depending on which side
 of the bed is clear.
-@return butt_pos, face_dir
+@returns one of the following:
+ - { pos=pos }               # single position, don't care the facing dir
+ - { pos=pos, footvec=dir }  # single position with a single footvec
+ - { { ... }, { ... } }      # array of one of the above
+
+A position entry is returned if sitting on the ground.
+A position with a facedir is returned if sitting on a chair or stair.
+An array of positions with facedirs can be returned for:
+ - a bench (same pos, 2 facedirs)
+ - a bed (up to 5 entries)
 
 NOTE: face_dir is nil if it doesn't matter (don't set the MOB facing direction)
 If not nil, then call "self:set_yaw_by_direction(face_dir)"
@@ -766,56 +882,104 @@ function func.get_seat_pos(node_pos)
 
 	-- Not collidable, so we are sitting on the node below
 	if not pathfinder.is_node_collidable(node) then
-		return butt_pos, nil
+		-- TODO: See if there is a low table on any of the four sides and add
+		-- entries to face those. But then there should be a matt or something
+		-- where we would sit.
+		return {{ pos=butt_pos, npos=node_pos }}
 	end
 
-	-- See if we may need to set face_dir
+	-- See if we may need to set face_dir (chairs, benches, beds, stairs)
 	local nodedef = minetest.registered_nodes[node.name]
 	if nodedef.paramtype2 ~= "facedir" or bit.band(node.param2, 0x1c) ~= 0 then
 		-- sit above the node, as the MOB will fall on it
 		butt_pos.y = butt_pos.y + 1
-		return butt_pos, nil
+		return {{ pos=butt_pos, npos=node_pos }}
 	end
 
 	-- flip 180 degrees so that this is the offset of the FEET
 	local feet_p2  = bit.band(node.param2 + 2, 3)
-	local face_dir = minetest.facedir_to_dir(feet_p2)
+	local foot_vec = minetest.facedir_to_dir(feet_p2)
+	local head_pos = vector.subtract(node_pos, foot_vec)
 
 	local vec = func.get_seat_offset(node.name)
-	butt_pos = vector.add(butt_pos, func.rotate_facedir(vec, feet_p2))
+	butt_pos = vector.add(butt_pos, rotate.vec_facedir(vec, feet_p2))
 	local is_bed = func.is_bed(node.name)
-	--log.action("func.get_seat_pos: node_pos=%s butt_pos=%s face_dir=%s is_bed=%s",
+	--log.action("func.get_seat_pos: node_pos=%s butt_pos=%s foot_vec=%s is_bed=%s head=%s",
 	--	minetest.pos_to_string(node_pos),
 	--	minetest.pos_to_string(butt_pos),
-	--	minetest.pos_to_string(face_dir), tostring(is_bed))
+	--	minetest.pos_to_string(foot_vec), tostring(is_bed),
+	--	minetest.pos_to_string(head_pos))
 
-	if is_bed then
-		-- rotate 90 and calc the foot-node pos (right side, bottom)
-		face_dir = func.rotate_facedir(face_dir, 1)
-		local fpos = vector.add(node_pos, face_dir)
-		if not pathfinder.is_node_collidable(fpos) then
-			return butt_pos, face_dir
-		end
-		-- rotate 180 and try again (left side, bottom)
-		face_dir = func.rotate_facedir(face_dir, 2)
-		fpos = vector.add(node_pos, face_dir)
-		if not pathfinder.is_node_collidable(fpos) then
-			--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
-			return butt_pos, face_dir
-		end
-		--log.action(" -- %s %s IS collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
-		-- rotate 90 and try again (bottom side)
-		face_dir = func.rotate_facedir(face_dir, 1)
-		fpos = vector.add(node_pos, face_dir)
-		if not pathfinder.is_node_collidable(fpos) then
-			--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
-			return butt_pos, face_dir
-		end
-		--log.action(" -- %s %s IS collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
-		-- TODO: find the "top" part of the bed and try left/right from there
+	if not is_bed then
+		-- NOTE that chairs and benches are likely blocked by a table.
+		-- if we check for blockage, we will need to exclude tables.
+		return {{ pos=butt_pos, npos=node_pos, footvec=foot_vec }}
 	end
 
-	return butt_pos, face_dir
+	local results = {}
+
+	-- rotate 90 and calc the foot-node pos (right side, bottom)
+	foot_vec = rotate.vec_facedir(foot_vec, 1)
+	local fpos = vector.add(node_pos, foot_vec)
+	if not pathfinder.is_node_collidable(fpos) then
+		table.insert(results, { pos=butt_pos, npos=node_pos, footvec=foot_vec })
+	end
+
+	-- rotate 180 and try again (left side, bottom)
+	foot_vec = rotate.vec_facedir(foot_vec, 2)
+	fpos = vector.add(node_pos, foot_vec)
+	if not pathfinder.is_node_collidable(fpos) then
+		--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		table.insert(results, { pos=butt_pos, npos=node_pos, footvec=foot_vec })
+	end
+	--log.action(" -- %s %s IS collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+	-- move to the head position
+
+	-- rotate 180 and move to the bed head (right side, top)
+	foot_vec = rotate.vec_facedir(foot_vec, 2)
+	fpos = vector.add(head_pos, foot_vec)
+	if not pathfinder.is_node_collidable(fpos) then
+		--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		table.insert(results, { pos=head_pos, npos=head_pos, footvec=foot_vec })
+	end
+
+	-- rotate 180 and move to the bed head (left side, top)
+	foot_vec = rotate.vec_facedir(foot_vec, 2)
+	fpos = vector.add(head_pos, foot_vec)
+	if not pathfinder.is_node_collidable(fpos) then
+		--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		table.insert(results, { pos=head_pos, npos=head_pos, footvec=foot_vec })
+	end
+
+	-- rotate -90 so that feet face the bottom of the bed
+	-- see if we can hang off the bottom of the bed
+	foot_vec = rotate.vec_facedir(foot_vec, 1)
+	fpos = vector.add(node_pos, foot_vec)
+	if not pathfinder.is_node_collidable(fpos) then
+		--log.action(" -- %s %s not collidable", minetest.pos_to_string(fpos), minetest.get_node(fpos).name)
+		table.insert(results, { pos=node_pos, npos=node_pos, footvec=foot_vec })
+	end
+
+	-- add sitting completely on the bed, always last (as sometimes that is wanted)
+	table.insert(results, { pos=head_pos, npos=head_pos, footvec=foot_vec })
+
+	return results
+end
+
+--[[
+Get all valid sit positions on the node.
+For a chair, this returns func.get_seat_pos()
+For a bed, this can return up to 5 entries, in this order:
+ - foot, right
+ - foot, left
+ - head, right
+ - head, left
+ - head, down (fully on the bed)
+The only certain sit position on a bed is the last, as it only covers the two
+bed nodes. However, it will exclude any other MOB from sitting.
+]]
+function func.get_sit_positions(node_pos, npc)
+
 end
 
 local bed_head_tail = {
@@ -836,7 +1000,7 @@ local function find_adjacent_name(pos, name)
 		if node.name == name then
 			table.insert(res, apos)
 		end
-		dir = func.rotate_facedir(dir, 1)
+		dir = rotate.vec_facedir(dir, 1)
 	end
 	return res
 end
@@ -870,7 +1034,7 @@ local function bed_find_node_pos(pos)
 			end
 			if ii.anydir then
 				for _=1,3 do
-					dir = func.rotate_facedir(dir, 1)
+					dir = rotate.vec_facedir(dir, 1)
 					bot_pos = vector.subtract(pos, dir)
 					bot_node = minetest.get_node(bot_pos)
 					--log.action("bed_find_node_pos: anydir try %s h=%s b=%s",

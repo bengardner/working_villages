@@ -17,6 +17,9 @@ local function handle_sit(npc, pos)
 	npc:task_del("wait_sit", "new target")
 	npc:task_del("wait_lay", "new target")
 
+	if npc._anim == "sit" then
+		npc:stand_still(pos)
+	end
 	npc:sit_down(pos)
 	npc:task_add("wait_sit", 99)
 end
@@ -64,10 +67,15 @@ end
 minetest.register_tool("working_villages:commanding_sceptre", {
 	description = "villager commanding sceptre",
 	inventory_image = "working_villages_commanding_sceptre.png",
+	range = 16,
+
 	on_use = function(itemstack, user, pointed_thing)
-		if (pointed_thing.type == "object") then
-			local obj = pointed_thing.ref
-			local luaentity = obj:get_luaentity()
+		-- return nil to not modify itemstack
+		local meta = itemstack:get_meta()
+		local invname = meta:get_string("villager")
+
+		if pointed_thing.type == "object" then
+			local luaentity = pointed_thing.ref:get_luaentity()
 			if not working_villages.is_villager(luaentity.name) then
 				if luaentity.name == "__builtin:item" then
 					luaentity:on_punch(user)
@@ -75,8 +83,7 @@ minetest.register_tool("working_villages:commanding_sceptre", {
 				return
 			end
 
-			log.action("used commanding sceptre on %s", luaentity.inventory_name)
-			local meta = itemstack:get_meta()
+			log.action("commanding sceptre used on %s", luaentity.inventory_name)
 			meta:set_string("villager", luaentity.inventory_name)
 
 			local job = luaentity:get_job()
@@ -97,25 +104,30 @@ minetest.register_tool("working_villages:commanding_sceptre", {
 					end
 				end
 			end
-
+			-- need to update the itemstack meta data
 			return itemstack
 
 		elseif pointed_thing.type == "node" then
-			local meta = itemstack:get_meta()
-			local invname = meta:get_string("villager")
 			if invname ~= nil then
-				log.action("meta:villager = %s", invname)
+				-- villager might be in a chunk that is not be loaded
 				local npc = working_villages.active_villagers[invname]
 				if npc ~= nil then
+					log.action("commanding sceptre: %s -> %s %s", invname,
+						minetest.pos_to_string(pointed_thing.under),
+						minetest.get_node(pointed_thing.under).name)
 					handle_villager_command(npc, pointed_thing)
 				else
-					for i, n in pairs(working_villages.active_villagers) do
-						log.action("  %s = %s", tostring(i), tostring(n))
-					end
+					log.action("commanding sceptre: %s not found", invname)
 				end
 			end
-		else
-			log.action("pointed_thing.type = %s", pointed_thing.type)
+
+		else -- pointed_thing.type == "nothing"
+			if invname ~= "" then
+				log.action("commanding sceptre: deselected %s", invname)
+				meta:set_string("villager", "")
+				-- need to update the itemstack meta data
+				return itemstack
+			end
 		end
 	end
 })

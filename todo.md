@@ -555,10 +555,102 @@ Should also check the rotation of the bed/chair/bench and only use it if flat.
  - and finally, we need to save basic state so that it is restored on restart (?)
      - sitting on POS
      - laying on POS
+     - probably no need, as the server won't restart that often
 
 
 # Movement is completely broken in snow!
 
 The pathfinder logic is finding a path ABOVE the partial snow block.
+Need to change the logic to use the max height of the node collision_box to determine if it is "clear".
+Anything less than 1 would mean we can stand in that node. Height would have to be adjusted to be 2-3 nodes.
 
-Had to set stepheight to 1.5 to get it to work. Should probably be 1.1 or so.
+```
+if top is > 0.5, then consider the node walkable? (not sure if this would break anything)
+   meaning that the path will go through the node above that one.
+if top is 0 (non-walkable node, air) and height is 2, then we need 1 clear node above the position.
+if top is 0.125 (snow) and height is 2, then we need 2 clear nodes above the position.
+```
+
+Had to set stepheight to 1.5 to get it to work. Should probably be 1.2, as snow is 0.125 tall.
+
+Going from a non-snow node up to a node covered in snow would exceed the jump height of 1.
+
+
+### Block shapes to make "smoother" terrain.
+
+Split into 8 cubes. bottom, top
+```
+Solid
+** **
+** **
+
+top corner missing
+** **
+** *o
+
+top side missing (stair)
+** *o
+** *o
+
+top 3/4 missing
+** *o
+** oo
+
+top diag missing
+** *o
+** o*
+
+slab
+** oo
+** oo
+
+slab corner
+*o oo
+** oo
+
+slab side
+*o oo
+*o oo
+
+slab nub
+*o oo
+oo oo
+
+slab diag
+*o oo
+o* oo
+```
+
+# Keep a chunk loaded
+
+
+
+# AI Mobkit compatibility
+
+Set the mob `logic` function to `bgai.mobkit.logic()`
+
+`bgai.mobkit.logic()` calls `bgai.bot:schedule_check()` and the makes sure that `bgai.mobkit.hq_bgai()` is queued on the high-level queue.
+
+`hq_bgai()` calls `bgai.bot.task_execute()`, which runs the coroutine.
+
+`bgai.mobkit.run_lq_task()` will syncronously run a low-queue task until completion, with an optional timeout.
+```
+function bgai.mobkit.run_lq_task(self, lq_task, deadline)
+    while minetest.get_gametime() < deadline and #self.lqueue > 0 do
+		if lq_task(self) then
+            break
+		end
+        coroutine.yield()
+    end
+end
+```
+
+Note that this can replace ALL of mobkit's logic. low-queue stuff can still be used.
+
+All non-volatile storage for `bgai` is stored in `self.memory.bgai`.
+All temporary storage for `bgai` is stored in `self._bgai`.
+
+
+# Wield Item
+
+sit_down() and lay_down() needs to clear the wield item.
