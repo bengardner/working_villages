@@ -414,7 +414,7 @@ end
 -------------------------------------------------------------------------------
 
 local function wz_estimated_cost(start_wz, end_wz)
-	return vector.distance(start_wz:get_center_pos(), end_wz:get_center_pos())
+	return vector.distance(start_wz:get_center_pos(), end_wz:get_center_pos()) * 10
 	--return pathfinder.get_estimated_cost(start_wz:get_center_pos(), end_wz:get_center_pos())
 end
 
@@ -568,7 +568,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- need to try the neighbors until we hit it, the key is the wayzone "hash:idx"
 	local fwd = { posSet = wlist_new(), fwd=true }
 	local rev = { posSet = wlist_new(), fwd=false }
-	local hCost = wz_estimated_cost(si.wz, di.wz)
+	local hCost = 10 * vector.distance(si.pos, di.pos)
 
 	-- adds an active walker with logging -- remove logging when tested
 	local function add_open(fwd_rev, item)
@@ -758,10 +758,13 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			local adj_hash = self:refresh_links_around(xx_wz)
 
 			local link_tab
+			local tgt_info
 			if is_fwd then
 				link_tab = xx_wz.link_to
+				tgt_info = di
 			else
 				link_tab = xx_wz.link_from
+				tgt_info = si
 			end
 
 			-- Add an entry for each link from this wayzone
@@ -777,6 +780,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 					--log.action("   + hit")
 					local new_spos = link_wz:get_closest(xx.cur.spos)
 					local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
+					local new_hCost = 10 * vector.distance(tgt_info.pos, new_spos)
 					-- don't store a worse walker if we already visited this wayzone
 					local old_item = fr.posSet:get(link.key)
 					if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
@@ -784,7 +788,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 						add_open(fr, {
 							parent_key=xx.cur.key,
 							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key, spos=new_spos },
-							hCost=wz_estimated_cost(di.wz, link_wzc[link.index]),
+							hCost=new_hCost,
 							gCost=xx.gCost + new_gCost
 						})
 					else
