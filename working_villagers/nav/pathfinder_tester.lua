@@ -5,6 +5,9 @@ Based off the pathfiner tester used in the dev test.
 local S = minetest.get_translator("testpathfinder")
 local log = working_villages.require("log")
 
+local tool_name = "working_villages:testpathfinder"
+local marker_name = "working_villages:testpathfinder_dest"
+
 local pathfinder = working_villages.require("nav/pathfinder")
 local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
 local wayzone_store = working_villages.require("nav/wayzone_store")
@@ -17,7 +20,7 @@ local path_lines = line_store.new("pathfinder")
 local use_coroutine = false
 
 local function co_path(pos1, pos2)
-	local wzp = wayzone_path.start(pos1, pos2)
+	local wzp = wayzone_path.start(pos1, pos2, {debug=2})
 
 	local path = {}
 	local cur_pos = pos1
@@ -109,42 +112,57 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	--pathfinder.show_particles(path)
 end
 
-local function find_path_for_player(player, itemstack, pos1)
+local function tool_get_position(itemstack)
 	local meta = itemstack:get_meta()
-	if not meta then
+	if meta then
+		local x = meta:get_int("pos_x")
+		local y = meta:get_int("pos_y")
+		local z = meta:get_int("pos_z")
+		if x and y and z then
+			return vector.new(x, y, z)
+		end
+	end
+	return nil
+end
+
+local function tool_set_position(itemstack, pos)
+	local meta = itemstack:get_meta()
+	meta:set_int("pos_x", pos.x)
+	meta:set_int("pos_y", pos.y)
+	meta:set_int("pos_z", pos.z)
+end
+
+local function find_path_for_player(player, itemstack, pos1)
+	local pos2 = tool_get_position(itemstack)
+	if not pos2 then
 		return
 	end
-	local x = meta:get_int("pos_x")
-	local y = meta:get_int("pos_y")
-	local z = meta:get_int("pos_z")
-	if x and y and z then
-		local pos2 = vector.new(x, y, z)
-		local p1_g = pathfinder.get_ground_level(pos1)
-		local p2_g = pathfinder.get_ground_level(pos2)
-		--local pos1 = vector.round(player:get_pos())
-		local str = S("Tool: Path from @1 @2 to @3 @4:",
-			minetest.pos_to_string(pos1), minetest.pos_to_string(p1_g),
-			minetest.pos_to_string(pos2), minetest.pos_to_string(p2_g))
-		minetest.chat_send_player(player:get_player_name(), str)
-		minetest.log("action",
-			string.format("Path %s/%s -> %s/%s",
-				minetest.pos_to_string(pos1), minetest.pos_to_string(p1_g),
-				minetest.pos_to_string(pos2), minetest.pos_to_string(p2_g)))
 
-		local time_start = minetest.get_us_time()
-		local path = pathfinder.find_path(pos1, pos2, nil)
-		local time_end = minetest.get_us_time()
-		local time_diff = time_end - time_start
-		str = ""
-		if not path then
-			minetest.chat_send_player(player:get_player_name(), S("No path!"))
-			minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
-			return
-		end
-		minetest.chat_send_player(player:get_player_name(), str)
-		minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
+	local p1_g = pathfinder.get_ground_level(pos1)
+	local p2_g = pathfinder.get_ground_level(pos2)
+	--local pos1 = vector.round(player:get_pos())
+	local str = S("Tool: Path from @1 @2 to @3 @4:",
+		minetest.pos_to_string(pos1), minetest.pos_to_string(p1_g),
+		minetest.pos_to_string(pos2), minetest.pos_to_string(p2_g))
+	minetest.chat_send_player(player:get_player_name(), str)
+	minetest.log("action",
+		string.format("Path %s/%s -> %s/%s",
+			minetest.pos_to_string(pos1), minetest.pos_to_string(p1_g),
+			minetest.pos_to_string(pos2), minetest.pos_to_string(p2_g)))
+
+	local time_start = minetest.get_us_time()
+	local path = pathfinder.find_path(pos1, pos2, nil)
+	local time_end = minetest.get_us_time()
+	local time_diff = time_end - time_start
+	str = ""
+	if not path then
+		minetest.chat_send_player(player:get_player_name(), S("No path!"))
 		minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
+		return
 	end
+	minetest.chat_send_player(player:get_player_name(), str)
+	minetest.chat_send_player(player:get_player_name(), S("Path length: @1", #path))
+	minetest.chat_send_player(player:get_player_name(), S("Time: @1 ms", time_diff/1000))
 end
 
 local function find_path_for_player2(player, itemstack, pos1)
@@ -169,15 +187,12 @@ local function set_destination(itemstack, user, pointed_thing)
 	if not (user and user:is_player()) then
 		return
 	end
-	local name = user:get_player_name()
-	local obj
-	local meta = itemstack:get_meta()
 	if pointed_thing.type == "node" then
 		local pos = pointed_thing.above
-		meta:set_int("pos_x", pos.x)
-		meta:set_int("pos_y", pos.y)
-		meta:set_int("pos_z", pos.z)
+		tool_set_position(itemstack, pos)
 		minetest.chat_send_player(user:get_player_name(), S("Destination set to @1", minetest.pos_to_string(pos)))
+
+
 		-- TODO: set a marker at the destination (@ pos), save in local
 		return itemstack
 	end
@@ -206,7 +221,7 @@ end
 -- Punch: Find path
 -- Sneak+punch: Select pathfinding algorithm
 -- Place: Select destination node
-minetest.register_tool("working_villages:testpathfinder", {
+minetest.register_tool(tool_name, {
 	description = "Pathfinder Tester" .."\n"..
 		"Finds path between 2 points" .."\n"..
 		"Place on node: Select destination" .."\n"..
@@ -218,3 +233,75 @@ minetest.register_tool("working_villages:testpathfinder", {
 	on_place = set_destination,
 	range = 16,
 })
+
+-------------------------------------------------------------------------------
+-- This creates a pathfinder marker at the destination
+
+minetest.register_entity(marker_name, {
+	initial_properties = {
+		physical = false,
+		visual = "upright_sprite",
+		pointable = false,
+		collisionbox = {-0.5, -0.5, -0.5, 0.5, 0.5, 0.5},
+		visual_size = {x = 1, y = 1, z = 1},
+		--textures = {"testpathfinder_marker.png", "testpathfinder_marker.png"},
+		textures = {"testpathfinder_tool.png", "testpathfinder_tool.png"},
+		glow = 14,
+		nametag = "pathfinder\ndestination",
+		infotext = "marker",
+		static_save = false,
+		damage_texture_modifier = "^[brighten",
+		show_on_minimap = true,
+		automatic_rotate = 0.3,
+	},
+})
+
+local player_info = {}
+
+local function remove_player_marker(player)
+	local pi = player_info[player:get_player_name()]
+	if pi and pi.marker then
+		local m = pi.marker
+		pi.marker = nil
+		m:remove()
+	end
+end
+
+local function refresh_player_marker(player)
+	local name = player:get_player_name()
+	local pi = player_info[name]
+	local pos
+	local istack = player:get_wielded_item()
+
+	if istack:get_name() == tool_name then
+		pos = tool_get_position(istack)
+		if pi == nil then
+			pi = {}
+			player_info[name] = pi
+		end
+	end
+
+	if pi then
+		if pos then
+			if not pi.marker then
+				pi.marker = minetest.add_entity(pos, marker_name)
+				log.warning("Created pathfinder marker at %s", minetest.pos_to_string(pos))
+			else
+				pi.marker:set_pos(pos)
+			end
+		else
+			remove_player_marker(player)
+		end
+	end
+end
+
+-- I really want a "on_player_wielditem_change"
+minetest.register_globalstep(function(dtime)
+	for _, player in ipairs(minetest.get_connected_players()) do
+		refresh_player_marker(player)
+	end
+end)
+
+minetest.register_on_leaveplayer(function(player, timed_out)
+	remove_player_marker(player)
+end)

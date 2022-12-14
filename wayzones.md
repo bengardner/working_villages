@@ -880,3 +880,130 @@ Properties:
   * maxp - the maximum position in the store
   * count - the number of positions in the store
 
+
+
+## Doorway or Chokepoint detection
+
+It would be really nice to be able to detect a door way w/o a door.
+
+Top view.
+```
+   c
+XXX_XXXX - yes, corners overlap, creates isolated area
+   c
+
+   cc
+XXX__XXX - yes 2 blanks, creates isolated area
+   cc
+
+   c c
+XXX___XXX - no -- 3 blanks, corners not next to each other, area not isolated
+   c c
+```
+
+### Step 1: Find corner nodes and mark doorways/chokepoints
+
+If there are no outer corners, then we cannot split. An outer corner is a node where the diagonal is blocked, but the two adjacent nodes are not. There are 4 possibilites.
+
+Examples: (o=observer, X=blocked, _=OK)
+```
+_X  X_  _o  o_
+o_  _o  X_  _X
+```
+
+Draw "lines" between all corners that have visibility (n^2 issue), mark all non-corner nodes that are crossed as a "line".
+
+Do a flood fill on all "line" nodes, allowing only other "line" nodes. Stop at "corner" nodes. Abort if an unused node is hit (not "line" or "corner").
+
+Any successful fill is a new wayzone layer.
+
+Any node that is crossed AND is not a corner node should be tested to see if it is in a new area.
+
+Once these areas are identified, the existing wayzone needs to be split.
+
+The easiest way to do that is to flood-fill the wayzone an any unclaimed space. Repeat until all nodes are claimed.
+
+For example, a wayzone that covers a break in a wall would be split into 3 zones
+```
+Map       Corners     Start    ChokePt
+........  ........  11111111  11111111
+........  ...cc...  11111111  11111111
+XXX..XXX  XXX..XXX  ...11...  ...22...
+........  ...cc...  11111111  33333333
+........  ........  11111111  33333333
+```
+
+### Step 2: Corner Visible Split
+
+For each corner, find all nodes that are visible from that corner. Don't cross nodes used in the chokepoint layer. Record the distance from the node to the corner.
+
+All reachable nodes form a new view.
+
+If two "corner" views cover the same set of nodes, then discard one of them.
+
+In the above example, there would be no change in the Visible split, as all nodes are mutually visible.
+
+For the remaining corners, assign the node to the closest corner.
+
+[s][ ][ ][ ]
+[ ][X][d][ ]
+[ ][X][ ][X]
+
+s=(0,0)
+d=(2,1)
+step=(1, 0.5)
+(0,0), (1,0.5), (2,1)
+
+
+
+
+## Broke Ladders
+
+
+
+
+
+
+## Working on Simplifying Exit nodes (no storage)
+
+Exit nodes are only needed when calculating links. There is no need to keep them.
+
+Splitting a wayzone invalidates the exit nodes, so we may as well (re)calculate the exit nodes as needed.
+
+
+calculating `a` -> `b` links, where `a` and `b` are wayzones.
+
+`source_box` covers all the positions that might feed into `b`.
+```
+source_box = box_offset(a, -1, -jump_height, -1, 1, fear_height, 1)
+```
+
+Intersect that with the 'a' box to get the box for iteration.
+```
+iter_box = box_intersect(a, source_box)
+```
+
+When iterating, we need to make sure the position is really in `a`.
+```
+for pos in box_iter(iter_box) do
+    if a:inside(pos) then
+        -- calculate exit nodes "npos" and test against b:inside()
+    end
+end
+```
+
+If an exit node is in `b`, then we need one more step to see if we can really go from `pos` to `npos`. We need to check to see if the node at y+2 is clear above pos.
+
+Consider this side view. X=solid block. 'v' is above the position. 'a' is a valid position in wayzone a. `b' is a valid position in wayzone b.
+By simple math, `a` should be able to reach `b`.
+
+Howver the node above 'v' prevents the jump.
+```
+  X
+  X
+bbv
+XXaaa
+XXXXX
+```
+
+All that needs to be saved for a wayzone is the bit array of nodes where we can stand. (64 bytes)

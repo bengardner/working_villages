@@ -183,6 +183,12 @@ local function is_node_door(node)
 end
 pathfinder.is_node_door = is_node_door
 
+local function is_node_fence(node)
+	node = resolve_node(node)
+	return minetest.get_item_group(node.name, "fence") > 0
+end
+pathfinder.is_node_fence = is_node_fence
+
 --[[
 Check to see how many clear nodes are at and above @pos.
 Start checking at @start_height (usually 0 or 1).
@@ -313,7 +319,7 @@ local function scan_neighbor_start(nc, height, jump_height)
 	local water_cnt = 0
 
 	local ii = nc:get_dy(0)
-	ret.climb_up = ii.climb  -- may get cleared on the clearance check
+	ret.climb_up = ii.can_climb  -- may get cleared on the clearance check
 	ret.in_water = ii.water
 
 	if ii.water then
@@ -357,20 +363,48 @@ end
 -- Create when making a path, discard when done.
 local nodecache = {}
 
+--[[ Determine if a node should be classified as part of a "climb" wayzone.
+If @under_node is climbable, then return true.
+If both @under_node and @node are climbable, then return true.
+If @under_node is walkable/collidable then return false.
+If @node and @above_node are climbable, then return true.
+else return false
+
+We already determined that the MOB can stand at node.
+We want a blimbing zone to start 1 node above the ground.
+]]
+local function determine_climb(under_node, node, above_node, not_bottom)
+	-- if the node below is climbable, then a MOB can't be here unless it can climb.
+	local under_nodedef = minetest.registered_nodes[under_node.name] or {}
+	if under_nodedef.climbable then
+		return true
+	end
+	if not_bottom == true and under_nodedef.walkable then
+		return false
+	end
+	return is_node_climbable(node) or is_node_climbable(above_node)
+end
+
 function nodecache:get_at_pos(pos)
 	local hash = minetest.hash_node_position(pos)
 	local ii = self.data[hash]
 	if ii == nil then
 		local node = minetest.get_node(pos)
+		local above = vector.offset(pos, 0, 1, 0)
+		local above_node = minetest.get_node(above)
+		local under = vector.offset(pos, 0, -1, 0)
+		local under_node = minetest.get_node(under)
 		ii = {
 			pos = pos,
 			hash = hash,
 			node = node,
 			water = is_node_water(node),
 			door = is_node_door(node),
+			fence = is_node_fence(under_node),
 			clear = not is_node_collidable(node),
 			stand = is_node_standable(node),
-			climb = is_node_climbable(node),
+			climb = determine_climb(under_node, node, above_node, true),
+			can_climb = determine_climb(under_node, node, above_node, false),
 		}
 		self.data[hash] = ii
 	end
@@ -993,9 +1027,9 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 
 	local h_start = get_estimated_cost(start_pos, target_pos)
 
-	log.action("find_path: start %s dest %s hCost=%d",
+	log.action("find_path: start %s dest %s hCost=%d debug=%s options=%s",
 		minetest.pos_to_string(start_pos),
-		minetest.pos_to_string(target_pos), h_start)
+		minetest.pos_to_string(target_pos), h_start, tostring(args.debug), dump(options))
 
 	-- create a custom inside function if there is none defined
 	if target_inside == nil then
@@ -1282,20 +1316,23 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 	local args = get_find_path_args({ want_diag=false })
 	args.debug = debug or 0
 	local start_node = minetest.get_node(start_pos)
+	local start_under = vector.offset(start_pos, 0, -1, 0)
 	local start_nodedef = minetest.registered_nodes[start_node.name]
 	local below_pos = vector.new(start_pos.x, start_pos.y - 1, start_pos.z)
 	local below_node = minetest.get_node(below_pos)
 	local in_water = is_node_water(start_node)
 	local in_door = is_node_door(start_node)
-	local flags = { water = in_water, door = in_door }
+	local in_fence = is_node_fence(start_under)
+	local in_climb = determine_climb(below_node, start_node, minetest.get_node(vector.offset(start_pos, 0, 1, 0)), true)
+	local flags = { water = in_water, door = in_door, fence = in_fence, climb=in_climb }
 
 	args.nc = nodecache.new(start_pos)
 
 	if args.debug > 0 then
-		log.action("wayzone_flood @ %s %s walk=%s h=%d j=%d f=%d below=%s %s water=%s door=%s",
+		log.action("wayzone_flood @ %s %s walk=%s h=%d j=%d f=%d below=%s %s water=%s door=%s fence=%s",
 			minetest.pos_to_string(start_pos), start_node.name, tostring(start_nodedef.walkable),
 			args.height, args.jump_height, args.fear_height,
-			minetest.pos_to_string(below_pos), below_node.name, tostring(in_water), tostring(in_door))
+			minetest.pos_to_string(below_pos), below_node.name, tostring(in_water), tostring(in_door), tostring(in_fence))
 	end
 
 	-- NOTE: We don't need sorting, so just use tables
@@ -1330,18 +1367,27 @@ function pathfinder.wayzone_flood(start_pos, area, debug)
 			if visitedSet[n.hash] == nil and openSet[n.hash] == nil then
 				local ii = args.nc:get_at_pos(n.pos)
 				local dy = math.abs(n.pos.y - item.pos.y)
-				if not area:inside(n.pos, n.hash) or dy > y_lim or ii.water ~= in_water or ii.door ~= in_door then
+				if not area:inside(n.pos, n.hash) or dy > y_lim or
+					ii.water ~= in_water or ii.door ~= in_door or
+					ii.fence ~= in_fence or ii.climb ~= in_climb
+				then
 					exitSet[n.hash] = true
 					if args.debug > 1 then
-						log.action("   n %s %x w=%s/%s d=%s/%s EXIT",
-							minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water),
-							tostring(ii.door), tostring(in_door))
+						log.action("   n %s %x w=%s/%s d=%s/%s f=%s/%s c=%s/%s EXIT",
+							minetest.pos_to_string(n.pos), n.hash,
+							tostring(ii.water), tostring(in_water),
+							tostring(ii.door), tostring(in_door),
+							tostring(ii.fence), tostring(in_fence),
+							tostring(ii.climb), tostring(in_climb))
 					end
 				else
 					if args.debug > 1 then
-						log.action("   n %s %x w=%s/%s d=%s/%s VISITED",
-							minetest.pos_to_string(n.pos), n.hash, tostring(ii.water), tostring(in_water),
-							tostring(ii.door), tostring(in_door))
+						log.action("   n %s %x w=%s/%s d=%s/%s f=%s/%s c=%s/%s VISITED",
+							minetest.pos_to_string(n.pos), n.hash,
+							tostring(ii.water), tostring(in_water),
+							tostring(ii.door), tostring(in_door),
+							tostring(ii.fence), tostring(in_fence),
+							tostring(ii.climb), tostring(in_climb))
 					end
 					visitedSet[n.hash] = true
 					exitSet[n.hash] = nil -- might have been unreachable via another neighbor

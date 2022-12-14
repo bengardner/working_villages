@@ -313,6 +313,46 @@ The destination position is the "exit node".
 
 A series of wayzones are tied to the height, jump_height and fear_height settings. For now, I chose to use fixed values of height=2, jump_height=1, and fear_height=2. Different settings would require a different set of wayzones.
 
+## Transitions
+
+  - water to non-water (water gets its own wayzone)
+  - door to non-door (doors get their own wayzone)
+  - top_of_fence to not-top_of_fence (make it easy to not allow climbing a fence
+  - climb to non-climb
+
+Climbing note:
+
+I want a non-climbing MOB to be able to walk across a node containing a ladder if the ground underneath is solid.
+
+I want a "climbing" wayzone to be separate from normal terrain.
+
+A "climbing" node is any node that does not have solid ground underneath AND the node has climbable=true.
+
+In this side view, I want the ground to be walkable by all MOBs. The 'climbable' wayzone starts at y+1, above ground.
+(X=solid, H=ladder, 1=WZ1, 2=WZ2)
+```
+    HXXX      2XXX
+    HXXX      2XXX
+....HXXX  11111XXX
+XXXXXXXX  XXXXXXXX
+```
+If there is only 1 ladder, then we won't create a new wayzone, as all MOBs should be able to jump.
+
+```
+               111
+    HXXX  11111XXX
+XXXXXXXX  XXXXXXXX
+```
+
+I want the wayzone planner to be able to exclude certain terrain.
+
+  - MOB doesn't swim, so water is forbidden
+  - Check whether able to open a door while planning a route
+  - Can or can't hop over a fence
+  - Can or can't climb
+
+
+
 ## Chunk Size
 
 As of now, an 8x8x8 chunk size seems most promising. The other option is 16x16x16.
@@ -833,7 +873,26 @@ Reload when the object is resurrected.
 Not sure if this is worth it, but it would keep CPU time low.
 
 
-## Try using raycasting to simplify traveling on easy terrain ??
+## Silly Idea #28 : Use Lines for Outdoor Movement
+
+Use a modified Bresenham's line algo to walk directly toward the target using the wayzones.
+
+The path is a series of line segments.
+
+```
+S -> D
+
+S**?
+  ?**D
+```
+There are 3 possible moves: N/S or E/W or diagonal. If diagonal both the diagonal and either the N/S or E/W node must be clear.
+
+If an obstacle is hit, then trace left and right until an outer corner is hit. Insert that position as a waypoint between the current segment.
+```
+S -> P -> D
+```
+Then restart S->P.
+
 
 Not sure if it is usable, seeing as how the villager has to walk.
 Perhaps using bresenhams line algo?
@@ -857,3 +916,17 @@ The ref_pos for the first wayzone is the start_pos.
 The ref_pos for the last wayzone is the target_pos.
 The ref_pos for the second wayzone is the closest accessible node in the wayzone, which would be the closest exit pos to the current ref_pos.
 That doesn't seem too cheap to calculate.
+
+
+
+
+### BROKEN
+
+Don't do a diaganol unless BOTH corners are passible.
+```
+1   -- must go 1-2-3
+23
+
+12
+34 -- can go 1-4 directly
+```

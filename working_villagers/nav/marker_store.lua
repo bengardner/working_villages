@@ -14,8 +14,12 @@ function marker_store.get(name)
 end
 
 function marker_store.new(name, def)
-
-	local self = {
+	local self = marker_store.named[name]
+	if self then
+		-- REVISIT: override items in def?
+		return self
+	end
+	self = {
 		active = {},
 	}
 	for k, v in pairs(def) do
@@ -84,8 +88,10 @@ function marker_store:add(pos, text, color, texture)
 	local marker_hash = minetest.hash_node_position(marker_pos)
 	local ent = self.active[marker_hash]
 	if ent ~= nil then
-		ent._marker_text = ent._marker_text .. '\n' .. text
-		ent:refresh()
+		if text and text ~= "" and ent._marker_text ~= text then
+			ent._marker_text = ent._marker_text .. '\n' .. text
+			ent:refresh()
+		end
 		return
 	end
 	local obj = minetest.add_entity(pos, marker_name)
@@ -118,8 +124,20 @@ function marker_store:add(pos, text, color, texture)
 	return ent
 end
 
+function marker_store:get_marker(pos)
+	local marker_pos = vector.round(pos)
+	local marker_hash = minetest.hash_node_position(marker_pos)
+	local ent = self.active[marker_hash]
+	if ent ~= nil then
+		return ent
+	end
+	return nil
+end
+
 function marker_store:del(marker)
-	marker.object:remove()
+	if marker and marker.object then
+		marker.object:remove()
+	end
 end
 
 function marker_store:clear()

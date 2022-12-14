@@ -23,9 +23,8 @@ local wayzone_store = working_villages.require("nav/wayzone_store")
 local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local log = working_villages.require("log")
 local marker_store = working_villages.require("nav/marker_store")
-local markers = marker_store.new("waypoints", {texture="waypoint_sign.png"})
-local markers_waypoint = marker_store.new("waypoints", {texture="testpathfinder_waypoint.png"})
-local markers_visited = marker_store.new("waypoints", {texture="wayzone_node.png"})
+local markers_waypoint = marker_store.new("waypoints_w", {texture="testpathfinder_waypoint.png"})
+local markers_visited = marker_store.new("waypoints_v", {texture="wayzone_node.png"})
 
 local pathfinder = working_villages.require("nav/pathfinder")
 local fail = working_villages.require("failures")
@@ -54,9 +53,9 @@ function wayzone_path.start(start_pos, target_pos, args)
 	local target_bpos = vector.new(target_pos.x, target_pos.y-1, target_pos.z)
 	local target_bnode = minetest.get_node(target_bpos)
 
-	log.action(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s])",
+	log.action(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s]) args=%s",
 		minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
-		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name)
+		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name, dump(args))
 
 	args = args or {}
 	self.ss = args.store or wayzone_store.get(args)
@@ -154,6 +153,7 @@ function wayzone_path:next_goal(mob_pos)
 
 		local time_start = minetest.get_us_time()
 
+		local markers = marker_store.get("waypoints")
 		markers:clear()
 
 		self.wzpath = self.ss:find_path(si.pos, self.target_pos)
@@ -355,6 +355,7 @@ function wayzone_path:next_goal2(mob_pos)
 
 		local time_start = minetest.get_us_time()
 
+		local markers = marker_store.get("waypoints")
 		markers:clear()
 
 		self.wzpath = self.ss:find_path(si.pos, self.target_pos)

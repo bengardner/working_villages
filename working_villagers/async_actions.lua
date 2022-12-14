@@ -121,7 +121,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 			local dx = math.abs(v2.x - v1.x)
 			local dz = math.abs(v2.z - v1.z)
 			local d2 = dx*dx + dz*dz
-			return d2 < 2
+			return d2 < 0.5
 		end
 		local function is_same_vec(v1, v2)
 			local r1 = vector.round(v1)
@@ -158,6 +158,7 @@ local function try_a_path(self, dest_pos, dest_radius, dest_height)
 	-- the path has been completed, so we need to stop and stand.
 	-- the path may not have placed us at the destination, so the caller will
 	-- check and retry.
+	self:delay_seconds(0.2)
 	self.path = nil
 	self:stand_still()
 	return true

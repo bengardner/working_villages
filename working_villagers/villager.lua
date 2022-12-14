@@ -447,30 +447,43 @@ function villager:get_look_direction()
 	return vector.normalize{x = -math.sin(yaw), y = 0.0, z = math.cos(yaw)}
 end
 
+local function calc_lay_collision_box(self)
+	local dir = self:get_look_direction()
+	local dirx = math.abs(dir.x) * 0.5
+	local dirz = math.abs(dir.z) * 0.5
+	return { -0.5 - dirx, 0, -0.5 - dirz, 0.5 + dirx, 0.5, 0.5 + dirz }
+end
+
+function villager:get_animation()
+	return self._anim
+end
+
 function villager:animate(anim)
 	if self.animation and self.animation[anim] then
 		if self._anim == anim then
 			return
 		end
 		log.action("%s: animate %s", self.inventory_name, anim)
+
+		local aparms = self.animation[anim]
+		if #aparms > 0 and aparms.range == nil then
+			log.warning("multiple animations for %s", anim)
+			aparms = self.animation[anim][math.random(#self.animation[anim])]
+		end
+
+		self.object:set_animation(aparms.range, aparms.speed or 15, aparms.frame_blend or 0, aparms.loop)
+
+		local cbox
+		if type(aparms.collisionbox) == "table" then
+			cbox = aparms.collisionbox
+		elseif type(aparms.collisionbox) == "function" then
+			cbox = aparms.collisionbox(self)
+		else
+			cbox = self.initial_properties.collisionbox
+		end
+
+		self.object:set_properties({collisionbox=cbox, selectionbox=cbox})
 		self._anim = anim
-
-		local aparms = {}
-		if #self.animation[anim] > 0 then
-			aparms = self.animation[anim][random(#self.animation[anim])]
-		else
-			aparms = self.animation[anim]
-		end
-
-		self.object:set_animation(aparms.range, aparms.speed, aparms.frame_blend or 0, aparms.loop)
-		if anim == "lay" then
-			local dir = self:get_look_direction()
-			local dirx = math.abs(dir.x)*0.5
-			local dirz = math.abs(dir.z)*0.5
-			self.object:set_properties({collisionbox={-0.5-dirx, 0, -0.5-dirz, 0.5+dirx, 0.5, 0.5+dirz}})
-		else
-			self.object:set_properties({collisionbox={-0.25, 0, -0.25, 0.25, 1.75, 0.25}})
-		end
 	else
 		self._anim = nil
 	end
@@ -478,15 +491,16 @@ end
 
 -- villager.set_animation sets the villager's animation.
 -- this method is wrapper for self.object:set_animation.
+-- deprecated
 function villager:set_animation(frame)
 	self.object:set_animation(frame, 15, 0)
 	if frame == working_villages.animation_frames.LAY then
 		local dir = self:get_look_direction()
 		local dirx = math.abs(dir.x)*0.5
 		local dirz = math.abs(dir.z)*0.5
-		self.object:set_properties({collisionbox={-0.5-dirx, 0, -0.5-dirz, 0.5+dirx, 0.5, 0.5+dirz}})
+		self.object:set_properties({collisionbox=calc_lay_collision_box(self)})
 	else
-		self.object:set_properties({collisionbox={-0.25, 0, -0.25, 0.25, 1.75, 0.25}})
+		self.object:set_properties({collisionbox=self.initial_properties.collisionbox})
 	end
 end
 
@@ -670,7 +684,11 @@ function villager:change_direction(destination)
 
 	direction.y = 0
 	local velocity = vector.multiply(vector.normalize(direction), 1.5)
-	--log.action("velocity %s", tostring(velocity))
+	log.action("change_direction %s to %s dir=%s dist=%s vel=%s",
+		minetest.pos_to_string(position),
+		minetest.pos_to_string(destination),
+		minetest.pos_to_string(direction), tostring(vector.length(direction)),
+		minetest.pos_to_string(velocity))
 
 	self.object:set_velocity(velocity)
 	self:set_yaw_by_direction(direction)
@@ -761,7 +779,7 @@ end
 -- villager.is_near checks if the villager is within the radius of a position
 function villager:is_near(pos, distance)
 	local p = self.object:get_pos()
-	p.y = p.y + 0.5
+	p.y = p.y + 0.5 -- need node center ?
 	return vector.distance(p, pos) < distance
 end
 
@@ -1278,11 +1296,11 @@ function villager:physics()
 	local vnew = vector.new(vel)
 
 	-- dumb friction
-	if self.isonground and not self.isinliquid then
-		vnew = vector.new(vel.x > 0.2 and vel.x*func.friction or 0,
-		                  vel.y,
-		                  vel.z > 0.2 and vel.z*func.friction or 0)
-	end
+	--if self.isonground and not self.isinliquid then
+	--	vnew = vector.new(vel.x > 0.2 and vel.x*func.friction or 0,
+	--	                  vel.y,
+	--	                  vel.z > 0.2 and vel.z*func.friction or 0)
+	--end
 
 	-- bounciness
 	if self.springiness and self.springiness > 0 then
@@ -1510,13 +1528,15 @@ end
 
 --------------------------------------------------------------------
 
+-- default is to call the scheduler every few seconds.
 function villager:logic_default()
-	if func.timer(self, 1) then
+	if func.timer(self, 3) then
 		working_villages.tasks.schedule_check(self)
 	end
 end
 
--- on_step is a callback function that is called every delta times.
+-- on_step is a callback function that is called every step.
+-- @dtime is the amount of time that passed since the last call.
 function villager:on_step(dtime, colinfo)
 	-- copied from mobkit
 	self.dtime = math.min(dtime,0.2)
@@ -1586,6 +1606,7 @@ end
 --------------------------------------------------------------------
 
 -- copied from mobkit
+-- FIXME: do a full scan if the position changed enough?
 local function sensors()
 	local timer = 2
 	local pulse = 1
@@ -1789,7 +1810,7 @@ function villager.new(def)
 			collide_with_objects        = true,
 			visual                      = "mesh",
 			visual_size                 = {x = 1, y = 1},
-			collisionbox                = {-0.25, 0, -0.25, 0.25, 1.75, 0.25},
+			collisionbox                = {-0.25, 0, -0.25, 0.25, 1.7, 0.25},
 			pointable                   = true,
 			stepheight                  = 1.5,
 			is_visible                  = true,
@@ -1800,12 +1821,20 @@ function villager.new(def)
 			static_save                 = true,
 			show_on_minimap             = true,
 			damage_texture_modifier     = "^[brighten",
+			glow = 10,
 		},
 
+		--[[ Animation information. Defaults shown:
+		  { range={x=FIRST,y=LAST}, speed=15, loop=true, collisionbox=nil }
+		If collisionbox is missing, then initial_properties.collisionbox is used.
+		If collisionbox is a function, then that is called to produce the box.
+		]]
 		animation = {
 			stand     = { range={ x=  0, y= 79, }, speed=15, loop=true },
-			sit       = { range={ x= 81, y=160, }, speed=15, loop=true },
-			lay       = { range={ x=162, y=166, }, speed=15, loop=true },
+			sit       = { range={ x= 81, y=160, }, speed=15, loop=true,
+			              collisionbox={-0.3, 0.0, -0.3, 0.3, 1.2, 0.3} },
+			lay       = { range={ x=162, y=166, }, speed=15, loop=true,
+			              calc_lay_collision_box },
 			walk      = { range={ x=168, y=187, }, speed=15, loop=true },
 			mine      = { range={ x=189, y=198, }, speed=15, loop=true },
 			walk_mine = { range={ x=200, y=219, }, speed=15, loop=true },

@@ -5,6 +5,8 @@ local wayzone = working_villages.require("nav/wayzone")
 local log = working_villages.require("log")
 local line_store = working_villages.require("nav/line_store")
 local lines = line_store.new("visible", {spacing=0.2})
+local marker_store = working_villages.require("nav/marker_store")
+local corner_markers = marker_store.new("corners", {texture="wayzone_node.png"})
 
 local wayzone_utils = {}
 
@@ -49,7 +51,7 @@ local function put_particle(pos, args)
 end
 wayzone_utils.put_particle = put_particle
 
-wayzone_utils.dir_vectors = {
+local dir_vectors = {
 	[1] = vector.new( 0, 0, -1), -- up
 	[2] = vector.new( 1, 0, -1), -- up/right
 	[3] = vector.new( 1, 0,  0), -- right
@@ -59,39 +61,92 @@ wayzone_utils.dir_vectors = {
 	[7] = vector.new(-1, 0,  0), -- left
 	[8] = vector.new(-1, 0, -1), -- up/left
 }
+wayzone_utils.dir_vectors = dir_vectors
+
 -- adds to the dir index while wrapping around 1 and 8
-function wayzone_utils.dir_add(dir, delta)
+local function dir_add(dir, delta)
 	return 1 + ((dir - 1 + delta) % 8) -- modulo gives 0-7, need 1-8
 end
+wayzone_utils.dir_add =  dir_add
 
-function find_pos_in_wz(wz, pos)
-	pos = vector.round(pos)
-	for dy=-2,1 do
-		local tp = vector.offset(pos, 0, dy, 0)
+--[[ Find the Y for a neighbor position that is in the wayzone.
+We can only go up or down 1, based on a max jump height of 1.
+]]
+local function wz_neighbor_pos(wz, node_pos)
+	-- See if pos is in the wayzone
+	if wz:inside(node_pos) then
+		return node_pos
+	end
+	-- try y-1, y+1
+	for dy=-1,1,1 do
+		local tp = vector.offset(node_pos, 0, dy, 0)
 		if wz:inside(tp) then
 			return tp
 		end
 	end
 	return nil
 end
+wayzone_utils.wz_neighbor_pos = wz_neighbor_pos
 
-local function get_9_neighbors(wz, pos)
+--[[ Populate a table with the 8 neighbors to a position that must already
+be in the wayzone. This may have gaps, so iterate using pairs().
+]]
+local function wz_neighbors(wz, node_pos)
 	local nn = {}
-	for nidx, vec in ipairs(wayzone_utils.dir_vectors) do
-		nn[nidx] = find_pos_in_wz(wz, vector.add(pos, vec))
+	for nidx, vec in ipairs(dir_vectors) do
+		nn[nidx] = wz_neighbor_pos(wz, vector.add(node_pos, vec))
 	end
 	return nn
 end
+wayzone_utils.wz_neighbors = wz_neighbors
+
+--[[ Populate a table with the 8 neighbors to a position that must already
+be in the wayzone. This may have gaps, so iterate using pairs().
+]]
+local function wz_neighbors_nsew(wz, pos)
+	local res = {}
+	for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+		local pp = wz_neighbor_pos(wz, vector.add(pos, dir_vectors[ii]))
+		if pp then
+			table.insert(res, pp)
+		end
+	end
+	-- add up and down
+	for dy = -1,1,2 do
+		local pp = vector.offset(pos, 0, dy, 0)
+		if wz:inside(pp) then
+			table.insert(res, pp)
+		end
+	end
+	return res
+end
+wayzone_utils.wz_neighbors_nsew = wz_neighbors_nsew
 
 --[[
-See if we can do a "line" between the two without hitting a node that isn't present
+See if we can do a "line" between the two without hitting a node that isn't in
+the wayzone.
 If we move diagonal, we need to check to see if one corner is open.
+If @loose=true, then either node must be clear to do a diagonal.
+If @loose=false, then the appropriate node must be clear
+
+
+
+Returns nil if the line is blocked or the list of positions.
 ]]
-local function wz_visible_line(wz, spos, dpos)
+local function wz_visible_line(wz, spos, dpos, loose, is_ok_to_use)
 	local delta = vector.subtract(dpos, spos)
-	local steps = math.max(math.abs(delta.x), math.abs(delta.z))
+	local steps = math.max(math.abs(delta.x), math.abs(delta.z)) * 2
 	local vstep = vector.divide(delta, steps)
 	vstep.y = 0
+
+	local vsx = math.abs(vstep.x)
+	local vsz = math.abs(vstep.z)
+
+	local pos_list = {}
+
+	if not is_ok_to_use then
+		is_ok_to_use = function(pos) return true end
+	end
 
 	--log.action("wz_visible_line: %s %s", minetest.pos_to_string(spos), minetest.pos_to_string(dpos))
 	local fpos = spos
@@ -99,43 +154,203 @@ local function wz_visible_line(wz, spos, dpos)
 	for _=1,steps do
 		local tpos = vector.add(fpos, vstep)
 		local rpos = vector.round(tpos)
-		local wpos = find_pos_in_wz(wz, rpos)
-		if wpos == nil then
-			return false
-		end
-		if prev.x ~= rpos.x and prev.z ~= rpos.z then
-			local tp1 = vector.new(prev.x, rpos.y, rpos.z)
-			local tp2 = vector.new(rpos.x, rpos.y, prev.z)
-			if find_pos_in_wz(wz, tp1) == nil and find_pos_in_wz(wz, tp2) == nil then
-				return false
+		local wpos = wz_neighbor_pos(wz, rpos) -- adjust Y to find ground
+		if rpos ~= prev then
+			if wpos == nil or not is_ok_to_use(wpos) then
+				--log.action("wz_visible_line -- bailing on %s", minetest.pos_to_string(rpos))
+				return nil
 			end
+			--log.action("  st: %s", minetest.pos_to_string(wpos))
+			table.insert(pos_list, wpos)
+			if prev.x ~= rpos.x and prev.z ~= rpos.z then
+				local tp1 = vector.new(prev.x, rpos.y, rpos.z)
+				local tp2 = vector.new(rpos.x, rpos.y, prev.z)
+				if (loose or vsz <= vsx) and wz_neighbor_pos(wz, tp1) and is_ok_to_use(tp1) then
+					table.insert(pos_list, tp1)
+					--log.action("  st: %s tp1", minetest.pos_to_string(tp1))
+				elseif (loose or vsz >= vsx) and wz_neighbor_pos(wz, tp2) and is_ok_to_use(tp2) then
+					table.insert(pos_list, tp2)
+					--log.action("  st: %s tp2", minetest.pos_to_string(tp2))
+				else
+					return nil
+				end
+			end
+			prev = rpos
 		end
-		prev = rpos
 		fpos = vector.new(tpos.x, rpos.y, tpos.z)
 	end
-	return true
+	return pos_list
+end
+wayzone_utils.wz_visible_line = wz_visible_line
+
+--[[
+Do a flood fill search on the the wayzone starting at @pos.
+
+@meta_map has key=pos_hash and val="corner", "line", or "done".
+
+if @lines_only is true, then @pos is a "line" node and we should only trace "line"
+nodes. If a node that isn't "line" or "corner" is hit, then this fails.
+
+If @lines_only is false, then we can enter any node that isn't "done".
+
+If the flood fill is successful, the all visited nodes are marked "done".
+]]
+local function flood_fill_pos(wz, meta_map, pos, lines_only)
+	--log.action("flood_fill_pos %s", minetest.pos_to_string(pos))
+
+	local active = {}
+	local visited = {}
+	local corners = {} -- corners hit
+
+	table.insert(active, pos)
+	while #active > 0 do
+		local cur = active[#active]
+		table.remove(active)
+		local hh = minetest.hash_node_position(cur)
+		visited[hh] = cur
+		--log.action("flood_fill_pos process: %s", minetest.pos_to_string(cur))
+
+		for _, pp in ipairs(wz_neighbors_nsew(wz, cur)) do
+			local hh = minetest.hash_node_position(pp)
+			-- don't revisit, don't add corners
+			if visited[hh] == nil and active[hh] == nil and meta_map[hh] ~= "done" then
+				if lines_only then
+					if meta_map[hh] == "line" then
+						table.insert(active, pp)
+					elseif meta_map[hh] == "corner" then
+						-- this is OK
+						table.insert(corners, pp)
+					else
+						-- FAIL: when tracing lines, we can only hit a line or corner
+						return nil
+					end
+				else
+					table.insert(active, pp)
+					if meta_map[hh] == "corner" then
+						table.insert(corners, pp)
+					end
+				end
+			end
+		end
+	end
+
+	--[[ We want to specifically avoid creating a zone in a diagonal corner.
+	     c
+	  XXX
+	  XX.c
+	  X.c
+	   c
+	]]
+	if #corners == 2 and math.abs(corners[1].x - corners[2].x) == 1 and math.abs(corners[1].z - corners[2].z) == 1 then
+		return nil
+	end
+
+	-- mark all the visited nodes as "done"
+	for hh, _ in pairs(visited) do
+		meta_map[hh] = 'done'
+	end
+	-- all the nodes are now in visited
+	--log.action("flood_fill_pos visited: %s", dump(visited))
+	return visited, corners
+end
+
+-- check if a position hash is in the list of zones
+local function hash_in_zone(zones, hash_or_pos)
+	if type(hash_or_pos) == "table" then
+		hash_or_pos = minetest.hash_node_position(hash_or_pos)
+	end
+	for zi, zz in ipairs(zones) do
+		if zz[hash_or_pos] ~= nil then
+			--log.action("in_zone %d: %s %x", zi, minetest.get_position_from_hash(hash_or_pos), hash_or_pos)
+			return true
+		end
+	end
+	return false
+end
+
+-- Build a list of zones that are made up of "line" nodes.
+local function flood_fill_zone(wz, meta_map, fill_unused)
+	local all_zones = {}
+
+	-- flood_fill_pos() alters meta_map, so we need to extract lines first
+	local lines = {}
+	for hh, tt in pairs(meta_map) do
+		if tt == "line" then
+			table.insert(lines, hh)
+		end
+	end
+	for _, hh in ipairs(lines) do
+		if not hash_in_zone(all_zones, hh) then
+			local pos = minetest.get_position_from_hash(hh)
+			local ff, cc = flood_fill_pos(wz, meta_map, pos, true)
+			if ff then
+				--log.action("ff=%s cc=%s", dump(ff), dump(cc))
+				table.insert(all_zones, ff)
+			end
+		end
+	end
+
+	if fill_unused then
+		-- try all left-overs
+		for pos in wz:iter_visited() do
+			local hh = minetest.hash_node_position(pos)
+			if not hash_in_zone(all_zones, hh) then
+				local ff = flood_fill_pos(wz, meta_map, pos, false)
+				if ff then
+					table.insert(all_zones, ff)
+				end
+			end
+		end
+	end
+
+	---- log the zones and visually show them
+	--log.warning("there are %s zones", #all_zones)
+	--if #all_zones > 1 then
+	--	for zi, zz in ipairs(all_zones) do
+	--		for hh, _ in pairs(zz) do
+	--			local pos = minetest.get_position_from_hash(hh)
+	--			markers:add(vector.offset(pos, 0, zi, 0), tostring(zi), wz_colors[zi])
+	--		end
+	--	end
+	--	return all_zones
+	--end
+	return all_zones
 end
 
 local function detect_edges(wz)
-	log.action("detect_edges: %s", tostring(wz.key))
+	--log.action("detect_edges: %s", tostring(wz.key))
 	local edges = {}
+	local meta_map = {} -- key=hash, val="edge"
+
+	-- detect and label corners
 	for pos in wz:iter_visited() do
-		local nn = get_9_neighbors(wz, pos)
+		local nn = wz_neighbors(wz, pos)
 		--log.action(" -- %s => %s", minetest.pos_to_string(pos), dump(nn))
+		-- testing N/S/E/W
 		for ii=2,8,2 do
-			if (not nn[ii]) and nn[ii-1] and nn[wayzone_utils.dir_add(ii,1)] then
-				log.warning("edge %s", minetest.pos_to_string(pos))
+			if (not nn[ii]) and nn[ii-1] and nn[dir_add(ii,1)] then
+				--log.warning("corner %s", minetest.pos_to_string(pos))
 				table.insert(edges, {pos=pos})
+				meta_map[minetest.hash_node_position(pos)] = "corner"
 				break
 			end
 		end
 	end
+
+	-- draw lines between visible corners
 	for si=1,#edges do
 		local se = edges[si]
 		for di=si+1,#edges do
 			local de = edges[di]
-			if wz_visible_line(wz, se.pos, de.pos) then
+			local line_pos = wz_visible_line(wz, se.pos, de.pos, false, nil)
+			if line_pos then
 				table.insert(se, de.pos)
+				for _, lp in ipairs(line_pos) do
+					local hash = minetest.hash_node_position(lp)
+					if not meta_map[hash] then
+						meta_map[hash] = "line"
+					end
+				end
 			end
 		end
 	end
@@ -147,7 +362,155 @@ local function detect_edges(wz)
 	--	end
 	--end
 
-	return edges
+	return edges, meta_map
+end
+
+-- see if 2 tables have the same keys
+local function same_table_keys(a, b)
+	for k, _ in pairs(a) do
+		if b[k] == nil then
+			--log.action("same_table_keys: a.k %x is not in b", k)
+			return false
+		end
+	end
+	for k, _ in pairs(b) do
+		if a[k] == nil then
+			--log.action("same_table_keys: b.k %x is not in a", k)
+			return false
+		end
+	end
+	log.action("same_table_keys: look the same")
+	return true
+end
+
+--[[
+Split the wayzone based on corners.
+1. find all corners. if no corners, return nil
+2. draw lines between visible corners and mark nodes as "line"
+3. Find groups of "line" nodes that are surrounded by "corner" and impassible nodes
+4. Group remaining nodes based on the closest corner
+5. If we have only one group, then return nil
+
+@return array of tables of the form: [hash] = pos
+]]
+function wayzone_utils.wz_split(wz)
+	local edges, meta_map = detect_edges(wz)
+
+	-- extract corner info
+	local corners = {}
+	local ncorner = 0
+	for hh, mm in pairs(meta_map) do
+		if mm == "corner" then
+			local cc = { pos=minetest.get_position_from_hash(hh), nodes={}, owned={} }
+			corners[hh] = cc
+			ncorner = ncorner + 1
+			--corner_markers:add(cc.pos, "corner", wz_colors[1])
+		end
+	end
+	if not next(corners) then
+		-- no corners, cannot split
+		return nil
+	end
+
+	--log.warning("wz_split[%s] corners: %s", wz.key, tostring(ncorner))
+
+	-- start with chokepoints/doorframes
+	local new_zones = flood_fill_zone(wz, meta_map, true)
+
+	---- group the remaining nodes by visible corner
+	--for vp in wz:iter_visited() do
+	--	local vh = minetest.hash_node_position(vp)
+	--	if not hash_in_zone(new_zones, vh) then
+	--		for ch, cpi in pairs(corners) do
+	--			if cpi.nodes[vh] == nil then
+	--				local nlist = wz_visible_line(wz, vp, cpi.pos, false,
+	--					function(tpos)
+	--						return not hash_in_zone(new_zones, tpos)
+	--					end)
+	--				if nlist then
+	--					-- any node in the line is also visible
+	--					cpi.nodes[vh] = vp
+	--					for _, lp in ipairs(nlist) do
+	--						cpi.nodes[minetest.hash_node_position(lp)] = lp
+	--					end
+	--				end
+	--			end
+	--		end
+	--	end
+	--end
+	--
+	--local function update_owned()
+	--	for _, cpi in pairs(corners) do
+	--		cpi.owned = {}
+	--	end
+	--	-- scan again to find the closest corner for each line
+	--	for vp in wz:iter_visited() do
+	--		local vh = minetest.hash_node_position(vp)
+	--		if not hash_in_zone(new_zones, vh) then
+	--			local best = {}
+	--			for ch, cpi in pairs(corners) do
+	--				if cpi.nodes[vh] ~= nil then
+	--					local dist = vector.distance(cpi.pos, vp)
+	--					if not best.dist or dist < best.dist then
+	--						best.dist = dist
+	--						best.cpi = cpi
+	--					end
+	--				end
+	--			end
+	--			if best.cpi then
+	--				best.cpi.owned[vh] = vp
+	--			else
+	--				log.warning("ORPHAN: %s", minetest.pos_to_string(vp))
+	--			end
+	--		end
+	--	end
+	--end
+	--update_owned()
+	--
+	---- See if ALL the 'owned' nodes are visible from another corner.
+	---- If so, we can drop this corner.
+	--for oh, ocpi in pairs(corners) do
+	--	local remain = {}
+	--	for k, v in pairs(ocpi.owned) do
+	--		remain[k] = v
+	--	end
+	--	for ih, icpi in pairs(corners) do
+	--		if oh ~= ih then
+	--			for k, v in pairs(icpi.nodes) do
+	--				if remain[k] then
+	--					remain[k] = nil
+	--				end
+	--			end
+	--			if not next(remain) then
+	--				break
+	--			end
+	--		end
+	--	end
+	--	if not next(remain) then
+	--		--log.warning("dropping corner %s", minetest.pos_to_string(ocpi.pos))
+	--		ocpi.owned = {}
+	--		ocpi.nodes = {}
+	--		update_owned()
+	--	end
+	--end
+	--
+	---- create new zones
+	--for hh, cpi in pairs(corners) do
+	--	local new_zone = {}
+	--	for nh, np in pairs(cpi.owned) do
+	--		new_zone[nh] = np
+	--	end
+	--	if next(new_zone) then
+	--		table.insert(new_zones, new_zone)
+	--	end
+	--end
+
+	-- need 2 new zones to split the wayzone
+	if #new_zones > 1 then
+		return new_zones
+	end
+	-- no need to split, as all nodes are in the same group
+	return nil
 end
 
 -- show particles for one wayzone
@@ -173,17 +536,21 @@ function wayzone_utils.show_particles_wz(wz)
 	end
 
 	-- exit nodes
-	for pp in wz:iter_exited() do
-		put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=xt})
-	end
+	--for pp in wz:iter_exited() do
+	--	put_particle(vector.new(pp.x, pp.y+dy, pp.z), {texture=xt})
+	--end
 
-	lines:clear()
-	for _, pp in pairs(detect_edges(wz)) do
-		put_particle(vector.new(pp.pos.x, pp.pos.y+dy+0.1, pp.pos.z), {texture=xec})
-		for _, vv in ipairs(pp) do
-			lines:draw_line(pp.pos, vv)
-		end
-	end
+	---- split into sub-zones (remove when integrated)
+	--local new_zones = wayzone_utils.wz_split(wz)
+	--if new_zones then
+	--	log.warning("Calculated %s zones", tostring(#new_zones))
+	--	for zi, zz in ipairs(new_zones) do
+	--		for nh, np in pairs(zz) do
+	--			log.action("zone %2d %s", zi, minetest.pos_to_string(np))
+	--			markers:add(vector.offset(np, 0, zi/10.0, 0), tostring(zi), wz_colors[zi])
+	--		end
+	--	end
+	--end
 end
 
 -- show all the particles, @wzc is a wayzone_chunk or an array of wayzones

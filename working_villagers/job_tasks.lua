@@ -35,20 +35,35 @@ A typical schedule would be:
 local log = working_villages.require("log")
 local pathfinder = working_villages.require("nav/pathfinder")
 local func = working_villages.require("jobs/util")
+local marker_store = working_villages.require("nav/marker_store")
+local markers_rest = marker_store.new("rest", {texture="testpathfinder_waypoint.png", yoffs=0.3, visual_size = {x = 0.3, y = 0.3, z = 0.3}})
 
 local tasks = {}
 
 -- require a clear area (non-walkable) with standable below in a 3x3 grid
+-- 1. Find a chair
+-- 2. Find a bed to sit on
+-- 3. Find a spot on the ground
 local function is_resting_spot(pos)
 	-- did we already fail to reach this one?
 	if working_villages.failed_pos_test(pos) then return false end
+
+	local node = minetest.get_node(pos)
+
+	if func.is_chair(node.name) or func.is_bench(node.name) then
+		return true
+	end
+
+	markers_rest:clear()
 	-- we want a 3x3 area to rest on
 	for x = -1,1 do
 		for z = -1,1 do
 			local lpos = vector.new(pos.x+x, pos.y, pos.z+z)
-			if not pathfinder.is_node_standable(pos) then
+			if pathfinder.is_node_collidable(lpos) then
+				markers_rest:clear()
 				return false
 			end
+			markers_rest:add(lpos, "standable")
 		end
 	end
 	return true

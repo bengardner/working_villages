@@ -49,6 +49,8 @@ local func = working_villages.require("jobs/util")
 local marker_store = working_villages.require("nav/marker_store")
 local markers = marker_store.new("dots", {texture="wayzone_node.png", yoff=-0.2})
 
+local line_gen = working_villages.require("nav/line_gen")
+
 local wayzone_store = {}
 
 -- array of stores
@@ -140,14 +142,16 @@ local function wayzones_refresh_links(from_wzc, to_wzc)
 			if from_wz.key ~= to_wz.key then
 				--log.action("wayzones_refresh_links: check %s -> %s",
 				--	from_wz.key, to_wz.key)
-				-- if from_wz exits into to_wz, then we have a winner
-				local xcnt = from_wz:exited_to(to_wz, 32)
-				if xcnt > 0 then
-					--log.action(" + wayzone_link %s => %s g=%d xcnt=%d",
-					--	from_wz.key, to_wz.key, to_wzc.generation, xcnt)
-					from_wz:link_add_to(to_wz, xcnt)
-					to_wz:link_add_from(from_wz, xcnt)
-				end
+				from_wz:link_other(to_wz)
+				to_wz:link_other(from_wz)
+				---- if from_wz exits into to_wz, then we have a winner
+				--local xcnt = from_wz:exited_to(to_wz, 32)
+				--if xcnt > 0 then
+				--	--log.action(" + wayzone_link %s => %s g=%d xcnt=%d",
+				--	--	from_wz.key, to_wz.key, to_wzc.generation, xcnt)
+				--	from_wz:link_add_to(to_wz, xcnt)
+				--	to_wz:link_add_from(from_wz, xcnt)
+				--end
 			end
 		end
 	end
@@ -270,16 +274,30 @@ local function process_chunk(self, chunk_hash)
 				--log.action(" exited  %12x %s", h, minetest.pos_to_string(pp))
 				wz:insert_exit(pp)
 			end
-			wz:finish(wzFlags.water, wzFlags.door)
+			wz:finish(wzFlags)
+
+			-- don't split special zones
+			-- wz.chash == 0x7fa8800081b0 and
+			if not (wzFlags.climb or wzFlags.water or wzFlags.door or wzFlags.fence) then
+				local new_zones = wayzone_utils.wz_split(wz)
+				if new_zones then
+					table.remove(wzc) -- remove wayzone that was split
+					-- build new wayzones
+					log.action("there are %s new zones", #new_zones)
+					for zi, zz in ipairs(new_zones) do
+						local nwz = wzc:new_wayzone()
+						for _, pp in pairs(zz) do
+							nwz:insert(pp)
+						end
+						--nwz:recalc_exit()
+						nwz:finish(wzFlags)
+					end
+				end
+			end
 
 			if self.debug > 0 then
-				local aa = {}
-				for idx, exitstr in pairs(wz.exited) do
-					table.insert(aa, string.format("[%d]=%d", idx, #exitstr))
-				end
-				log.action("++ wayzone %s cnt=%d center=%s box=%s,%s exit=%s", wz.key, wz.visited_count,
-					minetest.pos_to_string(wz.center_pos), minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp),
-					table.concat(aa, ","))
+				log.action("++ wayzone %s cnt=%d center=%s box=%s-%s ", wz.key, wz.visited_count,
+					minetest.pos_to_string(wz.center_pos), minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
 			end
 		end
 	end
@@ -502,15 +520,15 @@ function wayzone_store:refresh_links_around(wz)
 	local wzc = self:chunk_get_by_hash(wz.chash)
 
 	-- refresh all adjacent chunks, which handles the 'dirty' state
-	for aidx, avec in pairs(wz.exited) do
-		local n_cpos = vector.add(wz.cpos, wayzone.chunk_adjacent[aidx])
+	for aidx, avec in pairs(wayzone.chunk_adjacent) do
+		local n_cpos = vector.add(wz.cpos, avec)
 		local n_chash = minetest.hash_node_position(n_cpos)
 		adj_hash_pos[aidx] = n_chash
 		self:chunk_get_by_hash(n_chash)
 	end
 
 	-- refresh links
-	for aidx, _ in pairs(wz.exited) do
+	for aidx, _ in pairs(wayzone.chunk_adjacent) do
 		local n_chash = adj_hash_pos[aidx]
 		local n_wzd = self:chunk_get_by_hash(n_chash)
 		if n_wzd ~= nil then
@@ -569,6 +587,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	local fwd = { posSet = wlist_new(), fwd=true }
 	local rev = { posSet = wlist_new(), fwd=false }
 	local hCost = 10 * vector.distance(si.pos, di.pos)
+	--wz_estimated_cost(si.wz, di.wz)
 
 	-- adds an active walker with logging -- remove logging when tested
 	local function add_open(fwd_rev, item)
@@ -774,25 +793,27 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 				if link_wzc == nil then
 					-- TODO: this is a link to a non-adjacent chunk. We need to check the gen of each
 					--       chunk in the chain and make sure they are current.
-					log.warning("   + no WZC !!")
+					log.warning("   + no WZC !! for %s", link.key)
 				else
 					local link_wz = link_wzc[link.index]
-					--log.action("   + hit")
-					local new_spos = link_wz:get_closest(xx.cur.spos)
-					local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
-					local new_hCost = 10 * vector.distance(tgt_info.pos, new_spos)
-					-- don't store a worse walker if we already visited this wayzone
-					local old_item = fr.posSet:get(link.key)
-					if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
-						log.action("   + adding link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
-						add_open(fr, {
-							parent_key=xx.cur.key,
-							cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key, spos=new_spos },
-							hCost=new_hCost,
-							gCost=xx.gCost + new_gCost
-						})
-					else
-						log.action("   + exists link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
+					if link_wz then
+						--log.action("   + hit")
+						local new_spos = link_wz:get_closest(xx.cur.spos)
+						local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
+						local new_hCost = 10 * vector.distance(tgt_info.pos, new_spos)
+						-- don't store a worse walker if we already visited this wayzone
+						local old_item = fr.posSet:get(link.key)
+						if old_item == nil then -- or (old_item.gCost + old_item.hCost) > (n_hCost + n_gCost) then
+							log.action("   + adding link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
+							add_open(fr, {
+								parent_key=xx.cur.key,
+								cur={ pos=link_wzc.pos, hash=link.chash, index=link.index, key=link.key, spos=new_spos },
+								hCost=new_hCost,
+								gCost=xx.gCost + new_gCost
+							})
+						else
+							log.action("   + exists link %s -> %s xc=%d %s", xx_wz.key, link.key, link.xcnt, minetest.pos_to_string(new_spos))
+						end
 					end
 				end
 			end

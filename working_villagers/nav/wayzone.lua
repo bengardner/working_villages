@@ -279,6 +279,37 @@ wayzone.chunk_adjacent = {
 }
 
 --[[
+This has the box of local positions that should be checked when generating
+exit nodes for iter_exited()
+	@minp : start for each axis loop variable
+	@maxp : end for each axis loop variable
+	@ndir : limit neighbor check to this direction (nil=do all 4)
+
+Corner chunks are not in this table, as they are not adjacent.
+]]
+do
+	local cs = chunk_size - 1
+	local vn = vector.new
+	wayzone.chunk_adjacent_exit = {
+		[1]  = { minp=vn(  0,   0,   0), maxp=vn( cs, cs, cs) },   -- self/same chunk
+		[2]  = { minp=vn(  0,   0,   0), maxp=vn(  0, cs, cs), ndir=vn(-1, 0, 0) },   -- -X : plane at X=0
+		[3]  = { minp=vn( cs,   0,   0), maxp=vn( cs, cs, cs), ndir=vn( 1, 0, 0) },   -- +X : plane at X=cs
+		[4]  = { minp=vn(  0,   0,   0), maxp=vn( cs, cs,  0), ndir=vn( 0, 0,-1) },   -- -Z : plane at Z=0
+		[5]  = { minp=vn(  0,   0,  cs), maxp=vn( cs, cs, cs), ndir=vn( 0, 0, 1) },   -- +Z : plane at Z=cs
+		[6]  = { minp=vn(  0,   0,   0), maxp=vn( cs,  0, cs) },   -- -Y : plane at Y=0
+		[7]  = { minp=vn(  0,  cs,   0), maxp=vn( cs, cs, cs) },   -- +Y : plane at Y=sc
+		[8]  = { minp=vn(  0,   0,   0), maxp=vn(  0,  0, cs), ndir=vn(-1, 0, 0) },   -- -X, -Y : line at X=0, Y=0
+		[9]  = { minp=vn(  0,  cs,   0), maxp=vn(  0, cs, cs), ndir=vn(-1, 0, 0) },   -- -X, +Y : line at X=0, Y=cs
+		[10] = { minp=vn( cs,   0,   0), maxp=vn( cs,  0, cs), ndir=vn( 1, 0, 0) },   -- +X, -Y : line at X=cs, Y=0
+		[11] = { minp=vn( cs,  cs,   0), maxp=vn( cs, cs, cs), ndir=vn( 1, 0, 0) },   -- +X, +Y : line at X=cs, Y=cs
+		[12] = { minp=vn(  0,   0,   0), maxp=vn( cs,  0,  0), ndir=vn( 0, 0,-1) },   -- -Z, -Y : line at Y=0, Z=0
+		[13] = { minp=vn(  0,  cs,   0), maxp=vn( cs, cs,  0), ndir=vn( 0, 0,-1) },   -- -Z, +Y : line at Y=cs, Z=0
+		[14] = { minp=vn(  0,   0,  cs), maxp=vn( cs,  0, cs), ndir=vn( 0, 0, 1) },   -- +Z, -Y : line at Y=0, Z=cs
+		[15] = { minp=vn(  0,  cs,  cs), maxp=vn( cs, cs, cs), ndir=vn( 0, 0, 1) },   -- +Z, +Y : line at Y=cs, Z=cs
+	}
+end
+
+--[[
 Lookup table for finding the index for the lpos.
 The comparison of each axis (-1,0,1) is turned in a 3-bit field.
 Note: 3 is a 2-bit "-1"
@@ -349,22 +380,22 @@ end
 
 -- Insert an exit position in the correct table.
 function wayzone:insert_exit(pos)
-	local lpos = self:pos_to_lpos(pos)
-	local x_idx, x_lpos = exit_index(self, lpos)
-	if x_idx == nil then
-		log.warning("no exit idx lpos=%s pos=%s", minetest.pos_to_string(lpos), minetest.pos_to_string(pos))
-		return
-	end
-	-- We need to put it in the correct exited table to reduce iteration time.
-	-- This also indicates that the chunk to that side is important and we can
-	-- link to it.
-	local xmap = self.exited[x_idx]
-	if xmap == nil then
-		xmap = {}
-		self.exited[x_idx] = xmap
-	end
-	-- store the lpos for the adjacent chunk
-	xmap[lpos_to_hash(x_lpos)] = true
+	--local lpos = self:pos_to_lpos(pos)
+	--local x_idx, x_lpos = exit_index(self, lpos)
+	--if x_idx == nil then
+	--	log.warning("no exit idx lpos=%s pos=%s", minetest.pos_to_string(lpos), minetest.pos_to_string(pos))
+	--	return
+	--end
+	---- We need to put it in the correct exited table to reduce iteration time.
+	---- This also indicates that the chunk to that side is important and we can
+	---- link to it.
+	--local xmap = self.exited[x_idx]
+	--if xmap == nil then
+	--	xmap = {}
+	--	self.exited[x_idx] = xmap
+	--end
+	---- store the lpos for the adjacent chunk
+	--xmap[lpos_to_hash(x_lpos)] = true
 end
 
 -- add a visited node
@@ -449,34 +480,36 @@ We could save some memory by using the bounding box and have the bitarray relati
 to that. If a wayzone had one node, it would take 1 byte for the visited bitarray.
 Wayzones that were flat (dy=1) would use even less.
 ]]
-function wayzone:finish(in_water, in_door)
+function wayzone:finish(flags)
 	-- pack the visited table into a fixed-length string.
-	assert(type(self.visited) == "table")
+	assert(type(self.visited) == "table", "self.visited is not a table")
 	--self:minpackvisited()
 	local tmp = {}
 	for idx=1,chunk_bytes do
 		table.insert(tmp, string.char(self.visited[idx] or 0))
 	end
 	self.visited = table.concat(tmp, '')
-	self.in_water = in_water or false
-	self.in_door = in_door or false
+	self.in_water = flags.water or false
+	self.in_door = flags.door or false
+	self.on_fence = flags.fence or false
+	self.in_climb = flags.climb or false
 
 	-- pack the exited info into a variable-length string
 	-- REVISIT: use a bitmap for X,Z,+Y sides (8 bytes or u64)
-	local packed_exited = {}
-	for k, v in pairs(self.exited) do
-		--log.action("   idx=%d", k)
-		assert(type(v) == "table")
-		local xxx = {}
-		for hash, _ in pairs(v) do
-			--log.action("   exit %s", hash)
-			-- pack 16-bit hash MSB-first in a string
-			table.insert(xxx, string.char(bit.rshift(hash, 8), bit.band(hash, 0xff)))
-		end
-		packed_exited[k] = table.concat(xxx, '')
-		--log.action("packed %d=>%d", k, #packed_exited[k])
-	end
-	self.exited = packed_exited
+	--local packed_exited = {}
+	--for k, v in pairs(self.exited) do
+	--	--log.action("   idx=%d", k)
+	--	assert(type(v) == "table")
+	--	local xxx = {}
+	--	for hash, _ in pairs(v) do
+	--		--log.action("   exit %s", hash)
+	--		-- pack 16-bit hash MSB-first in a string
+	--		table.insert(xxx, string.char(bit.rshift(hash, 8), bit.band(hash, 0xff)))
+	--	end
+	--	packed_exited[k] = table.concat(xxx, '')
+	--	--log.action("packed %d=>%d", k, #packed_exited[k])
+	--end
+	--self.exited = packed_exited
 
 	-- update the center position
 	wayzone_calc_center(self)
@@ -555,47 +588,47 @@ Iterate over the "exited" stores
 If @adjacent_cpos is nil, the it iterates over all of them.
 If @adjacent_cpos is set to a neighboring chunk, then it only iterates over those.
 ]]
-function wayzone:iter_exited(adjacent_cpos)
-	-- Create a local list of populated indexes
-	local exited_indexes = {}
-	if adjacent_cpos == nil then
-		for x_idx, text in pairs(self.exited) do
-			table.insert(exited_indexes, x_idx)
-		end
-	else
-		local x_idx = exit_index(self, vector.subtract(adjacent_cpos, self.cpos))
-		-- check for invalid "adjacent" chunk
-		if x_idx ~= nil then
-			table.insert(exited_indexes, x_idx)
-		end
-	end
-
-	local exit_idx = 1	-- index into exited_indexes[]
-	local text_idx = 1  -- index into the string at self.exited[exited_indexes[exit_idx]]
-	return function()
-		while true do
-			if exit_idx > #exited_indexes then
-				return nil
-			end
-			local x_idx = exited_indexes[exit_idx]
-			local text = self.exited[x_idx]
-
-			if text ~= nil and text_idx < #text then
-				local hash = bit.lshift(string.byte(text, text_idx), 8) + string.byte(text, text_idx+1)
-				local lpos = hash_to_lpos(hash)
-				local pos = vector.add(self.cpos, lpos)
-				local avec = wayzone.chunk_adjacent[x_idx]
-				if avec ~= nil then
-					pos = vector.add(pos, avec)
-				end
-				text_idx = text_idx + 2
-				return pos
-			end
-			exit_idx = exit_idx + 1
-			text_idx = 1
-		end
-	end
-end
+--function wayzone:iter_exited_old(adjacent_cpos)
+--	-- Create a local list of populated indexes
+--	local exited_indexes = {}
+--	if adjacent_cpos == nil then
+--		for x_idx, text in pairs(self.exited) do
+--			table.insert(exited_indexes, x_idx)
+--		end
+--	else
+--		local x_idx = exit_index(self, vector.subtract(adjacent_cpos, self.cpos))
+--		-- check for invalid "adjacent" chunk
+--		if x_idx ~= nil then
+--			table.insert(exited_indexes, x_idx)
+--		end
+--	end
+--
+--	local exit_idx = 1  -- index into exited_indexes[]
+--	local text_idx = 1  -- index into the string at self.exited[exited_indexes[exit_idx]]
+--	return function()
+--		while true do
+--			if exit_idx > #exited_indexes then
+--				return nil
+--			end
+--			local x_idx = exited_indexes[exit_idx]
+--			local text = self.exited[x_idx]
+--
+--			if text ~= nil and text_idx < #text then
+--				local hash = bit.lshift(string.byte(text, text_idx), 8) + string.byte(text, text_idx+1)
+--				local lpos = hash_to_lpos(hash)
+--				local pos = vector.add(self.cpos, lpos)
+--				local avec = wayzone.chunk_adjacent[x_idx]
+--				if avec ~= nil then
+--					pos = vector.add(pos, avec)
+--				end
+--				text_idx = text_idx + 2
+--				return pos
+--			end
+--			exit_idx = exit_idx + 1
+--			text_idx = 1
+--		end
+--	end
+--end
 
 -- iterate over the visited nodes, returning the global position of each
 function wayzone:iter_visited()
@@ -614,7 +647,7 @@ function wayzone:iter_visited()
 	end
 	local byte_idx = 1
 	local bit_mask = 1
-	return function ()
+	return function()
 		while true do
 			if byte_idx > chunk_bytes then
 				return nil
@@ -885,18 +918,183 @@ function wayzone.new(cpos, index)
 	wz.index = index                                -- index in owning chunk
 	wz.cpos = wayzone.normalize_pos(cpos)           -- global coords of owning chunk
 	wz.chash = minetest.hash_node_position(wz.cpos) -- hash (ID) of owning chunk
+	wz.key = wayzone.key_encode(wz.chash, wz.index) -- unique key for this wayzone
 	-- wz.center_pos = visited node position closest to the center (global coords)
 	-- wz.minp = minimum of all visited node positions (global coords)
 	-- wz.maxp = maximum of all visited node positions (global coords)
-	-- globally unique key for this wayzone
-	wz.key = wayzone.key_encode(wz.chash, wz.index) -- unique key for this wayzone
 	wz.visited = {} -- visited locations (table of hashes or bitmap string)
-	wz.exited = {} -- inside=7,1..6=outside, val=table of hashes or array/string
 	-- wz.visited_count = number of visited entries after finish
 	-- the neighbor entries are only the chash, index, and key fields from the wayzone
 	wz.link_to = {}   -- links to other wayzones, key=other_wz.key
 	wz.link_from = {} -- links from other wayzones, key=other_wz.key
 	return setmetatable(wz, { __index = wayzone })
+end
+
+-------------------------------------------------------------------------------
+
+-- copied from wayzone_utils
+local dir_vectors = {
+	[1] = vector.new( 0, 0, -1), -- up
+	[2] = vector.new( 1, 0, -1), -- up/right
+	[3] = vector.new( 1, 0,  0), -- right
+	[4] = vector.new( 1, 0,  1), -- down/right
+	[5] = vector.new( 0, 0,  1), -- down
+	[6] = vector.new(-1, 0,  1), -- down/left
+	[7] = vector.new(-1, 0,  0), -- left
+	[8] = vector.new(-1, 0, -1), -- up/left
+}
+
+-- copied from wayzone_utils
+local function wz_neighbor_pos(wz, node_pos)
+	-- See if pos is in the wayzone
+	if wz:inside(node_pos) then
+		return node_pos
+	end
+	-- try y+1, y-1
+	for dy=1,-1,-2 do
+		local tp = vector.offset(node_pos, 0, dy, 0)
+		if wz:inside(tp) then
+			return tp
+		end
+	end
+	return nil
+end
+
+-- recalculate the exit nodes from the visited nodes
+-- NOTE: this can be automated and made part of iter_exited() to avoid storing
+--       any exit positions.
+function wayzone:recalc_exit()
+	-- FIXME: Gonna be real lazy here, adding every possible exit as we don't
+	-- want to depend on other wayzones.
+	for pos in self:iter_visited() do
+		for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+			local npos = vector.add(pos, dir_vectors[ii])
+			if wz_neighbor_pos(self, npos) == nil then
+				-- add y=-fall_height to y=jump_height
+				for dy = -2, 1 do
+					self:insert_exit(vector.offset(npos, 0, dy, 0))
+				end
+			end
+		end
+	end
+end
+
+local function inside_minp_maxp(pos, minp, maxp)
+	return (pos.x >= minp.x and pos.x <= maxp.x and
+	        pos.y >= minp.y and pos.y <= maxp.y and
+	        pos.z >= minp.z and pos.z <= maxp.z)
+end
+
+local function co_iter_exit_pos(self, pos, box)
+	local dbg
+	if (self.key == "7fa8800081c8:1") then
+		dbg = log.action
+	else
+		dbg = function() end
+	end
+
+	if self.in_climb or self.in_water then
+		-- climb/swim nodes can go 1 square in each 6 directions
+		-- We don't do a neighbor height check. maybe we should (step sideways off ladder and fall?)
+		for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+			local tpos = vector.add(pos, dir_vectors[ii])
+			if not self:inside(tpos) then
+				if not box or inside_minp_maxp(tpos, box.minp, box.maxp) then
+					coroutine.yield(tpos)
+					dbg("exit climb xz %s", minetest.pos_to_string(tpos))
+				end
+			end
+		end
+		for dy=-1,1,2 do
+			local tpos = vector.offset(pos, 0, dy, 0)
+			if not self:inside(tpos) then
+				coroutine.yield(tpos)
+				dbg("exit climb yy %s", minetest.pos_to_string(tpos))
+			else
+				dbg("exit climb yy %s (inside)", minetest.pos_to_string(tpos))
+			end
+		end
+		-- check for a 'drop'
+	else
+		-- door/fence/plain zones can step in XZ and may climb/fall.
+		for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+			local npos = vector.add(pos, dir_vectors[ii])
+			if wz_neighbor_pos(self, npos) == nil then
+				-- add y=-fall_height to y=jump_height
+				for dy = -2, 1 do
+					local tpos = vector.offset(npos, 0, dy, 0)
+					if not box or inside_minp_maxp(tpos, box.minp, box.maxp) then
+						coroutine.yield(tpos)
+						dbg("exit xz %s", minetest.pos_to_string(tpos))
+					end
+				end
+			end
+		end
+
+		-- We also need to check above in case we are under a climb zone
+		local tpos = vector.offset(pos, 0, 1, 0)
+		coroutine.yield(tpos)
+		dbg("exit up %s", minetest.pos_to_string(tpos))
+	end
+end
+
+-- yields all exit positions from the wayzone, in any direction
+local function co_iter_exit_all(self)
+	for pos in self:iter_visited() do
+		co_iter_exit_pos(self, pos)
+	end
+end
+
+-- yields exit positions from the wayzone that fall in a chunk
+-- these are *local* positions
+local function co_iter_exit_one(self, minlp, maxlp, box)
+	for x = minlp.x, maxlp.x do
+		for y = minlp.y, maxlp.y do
+			for z = minlp.z, maxlp.z do
+				local lpos = vector.new(x, y, z)
+				if self:inside_local(lpos) then
+					co_iter_exit_pos(self, self:lpos_to_pos(lpos), box)
+				end
+			end
+		end
+	end
+end
+
+local function returns_nil()
+	return nil
+end
+
+--[[
+Iterate over dynamically created "exited" stores.
+If @adjacent_cpos is nil, the it iterates over all of them.
+If @adjacent_cpos is set to a neighboring chunk, then it only iterates over those.
+
+1. Find the box (minp,maxp) for each chunk that we need to scan in the wayzone.
+   For internal, this would be (0,0,0)-(7,7,7)
+]]
+function wayzone:iter_exited(adjacent_cpos)
+	if adjacent_cpos == nil then
+		-- iterate over all, any exit (leave exit_box=nil)
+		return coroutine.wrap(function() co_iter_exit_all(self) end)
+	end
+
+	-- only want a subset of exit locations
+	local x_idx = exit_index(self, vector.subtract(adjacent_cpos, self.cpos))
+	if x_idx == nil then
+		return returns_nil
+	end
+
+	local adj = wayzone.chunk_adjacent[x_idx]
+	local cax = wayzone.chunk_adjacent_exit[x_idx]
+	if not cax or not adj then
+		return returns_nil
+	end
+
+	adj = self:lpos_to_pos(adj)
+	local box = { minp=adj, maxp=vector.offset(adj, chunk_size, chunk_size, chunk_size) }
+	return coroutine.wrap(function()
+		co_iter_exit_one(self, cax.minp, cax.maxp, box)
+	end)
 end
 
 -------------------------------------------------------------------------------
@@ -1008,6 +1206,214 @@ function wayzone:split()
 			log.action("wayzone:split %s - %s", minetest.pos_to_string(mm.minp), minetest.pos_to_string(mm.maxp))
 		end
 	end
+end
+
+-------------------------------------------------------------------------------
+-- Box functions
+-- A box is a table with a sorted minp and maxp.
+
+-- iterate over the positions in the box
+local function box_iter(box)
+	-- catch an invalid box
+	if box.maxp.x < box.minp.x or box.maxp.y < box.minp.y or box.maxp.z < box.minp.z then
+		return returns_nil
+	end
+
+	local x = box.minp.x
+	local y = box.minp.y
+	local z = box.minp.z
+	return function()
+		if z > box.maxp.z then
+			return nil
+		end
+		local pos = vector.new(x, y, z)
+		-- advance
+		x = x + 1
+		if x > box.maxp.x then
+			x = box.minp.x
+			y = y + 1
+			if y > box.maxp.y then
+				y = box.minp.y
+				z = z + 1
+			end
+		end
+		return pos
+	end
+end
+
+-- return true if pos is inside the box
+local function box_pos_inside(box, pos)
+	return (pos.x >= box.minp.x and pos.x <= box.maxp.x and
+	        pos.y >= box.minp.y and pos.y <= box.maxp.y and
+	        pos.z >= box.minp.z and pos.z <= box.maxp.z)
+end
+
+--[[
+return a new box that is the intersection of the two boxes.
+returns nil is there is no overlap.
+]]
+local function box_intersection(box1, box2)
+	-- check for any possible overlap
+	if box1.minp.x > box2.maxp.x or box2.minp.x > box1.maxp.x
+	or box1.minp.y > box2.maxp.y or box2.minp.y > box1.maxp.y
+	or box1.minp.z > box2.maxp.z or box2.minp.z > box1.maxp.z
+	then
+		return nil
+	end
+
+	return {
+		minp = vector.new(
+			math.max(box1.minp.x, box2.minp.x),
+			math.max(box1.minp.y, box2.minp.y),
+			math.max(box1.minp.z, box2.minp.z)
+			),
+		maxp = vector.new(
+			math.min(box1.maxp.x, box2.maxp.x),
+			math.min(box1.maxp.y, box2.maxp.y),
+			math.min(box1.maxp.z, box2.maxp.z)
+			)
+		}
+end
+
+--[[
+Check for a link from self to other.
+Compute two boxes that describe all possible exits from the wayzone.
+This expands by +1 in the XZ directions and by jump_height, -fear_height.
+
+TODO: this looks like it is much simpler than any other approach.
+We can make it a bit better by limiting the NSEW neighbor checks.
+For example, if the two wayzones are in neighboring chunks, then we only need
+to check one neighbor. (self is at x=0, other at x=8, only need to try neighbor
+node at x+1, as any other can't work.) Up, down or internal still has to check
+all 4 directions. May not be worh the effort.
+]]
+function wayzone:link_other(other)
+	local dbg
+	local wrn
+	if (self.key == "7fa8800081c8:1") or (other.key == "7fa8800081c8:1") then
+		wrn = log.warning
+		dbg = log.action
+	else
+		dbg = function() end
+		wrn = dbg
+	end
+
+	do
+		local nn
+		if self.chash == other.chash then
+			nn = "same"
+		else
+			nn = "adjacent"
+		end
+		wrn("link_other: %s %s-%s => %s %s-%s %s",
+			self.key, minetest.pos_to_string(self.minp), minetest.pos_to_string(self.maxp),
+			other.key, minetest.pos_to_string(other.minp), minetest.pos_to_string(other.maxp), nn)
+	end
+	if self.key == other.key then
+		return
+	end
+
+	-- s_box covers all start nodes that can land in other
+	local s_box = { minp=vector.offset(other.minp, -1, -1, -1),
+	                maxp=vector.offset(other.maxp, 1, 2, 1) }
+	dbg("link_other: s_box=%s-%s start nodes that might land in other",
+		minetest.pos_to_string(s_box.minp), minetest.pos_to_string(s_box.maxp))
+
+	-- intersect to find nodes that should be iterated
+	local is_box = box_intersection(self, s_box)
+	if not is_box then
+		dbg("link_other: not possible")
+		return
+	end
+	dbg("link_other: is_box=%s-%s box that we should iterate on",
+		minetest.pos_to_string(is_box.minp), minetest.pos_to_string(is_box.maxp))
+
+	local tried_hash = {}
+	local function test_neighbor(npos)
+		local hash = minetest.hash_node_position(npos)
+		if not tried_hash[hash] then
+			tried_hash[hash] = true
+			dbg("   -test %s", minetest.pos_to_string(npos))
+			if other:inside(npos) then
+				dbg("LINKED %s to %s via %s", self.key, other.key, minetest.pos_to_string(npos))
+				self:link_add_to(other, 3)
+				other:link_add_from(self, 3)
+				return true
+			end
+		end
+		return false
+	end
+
+	-- iterate
+	for pos in box_iter(is_box) do
+		if self:inside(pos) then
+			--dbg("  iter %s inside", minetest.pos_to_string(pos))
+			--[[
+			climb zones can move in the 6 directions and can drop off the bottom
+			water zones can mode in the 6 directions and can jump out of the water
+			A ladder over water is part of a climb zone.
+			A ladder over solid ground is not part of the climb zone.
+			]]
+			if self.in_water or self.in_climb then
+				dbg("  iter %s w/c pos", minetest.pos_to_string(pos))
+				-- try N/S/E/W
+				for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+					if test_neighbor(vector.add(pos, dir_vectors[ii])) then
+						return
+					end
+				end
+
+				-- try climb/swim up/down
+				for dy = 1, -1, -2 do
+					if test_neighbor(vector.offset(pos, 0, dy, 0)) then
+						return
+					end
+				end
+
+				-- if at the top of the water, we can jump out of the water to the side
+				if self.in_water and not self:inside(vector.offset(pos, 0, 1, 0)) then
+					for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+						local dvec = dir_vectors[ii]
+						if test_neighbor(vector.offset(pos, dvec.x, dvec.y + 1, dvec.z)) then
+							return
+						end
+					end
+				end
+
+				-- We can drop 2 from the ladder
+				if self.in_climb and test_neighbor(vector.offset(pos, 0, -2, 0)) then
+					return
+				end
+			else
+				--[[ Anything else (door, fence, plain) can move in the 4 NSEW with
+				optional jump or fall.
+				It can also go up into a climb zone. It can't go down.
+				]]
+				dbg("  iter %s plain", minetest.pos_to_string(pos))
+				for ii = 1,7,2 do -- do N/S/E/W 1,3,5,7
+					local npos = vector.add(pos, dir_vectors[ii])
+					--dbg("   - npos %s", minetest.pos_to_string(npos))
+					-- if NOT in this wayzone, try exit positions
+					if wz_neighbor_pos(self, npos) == nil then
+						-- scan top to bottom, jump_height to -fall_height
+						for dy = 1,-2,-1 do
+							if test_neighbor(vector.offset(npos, 0, dy, 0)) then
+								return
+							end
+						end
+					end
+				end
+				-- try up to move into a climb zone
+				if test_neighbor(vector.offset(pos, 0, 1, 0)) then
+					return
+				end
+			end
+		else
+			dbg("  iter %s NOT inside", minetest.pos_to_string(pos))
+		end
+	end
+
+	dbg("LINKED NONE %s to %s", self.key, other.key)
 end
 
 return wayzone
