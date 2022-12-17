@@ -12,8 +12,9 @@ local wayzone_path = working_villages.require("nav/wayzone_pathfinder")
 local wayzone_store = working_villages.require("nav/wayzone_store")
 local wayzone_utils = working_villages.require("nav/wayzone_utils")
 local line_store = working_villages.require("nav/line_store")
-local from_lines = line_store.new("wzcenter_from", {spacing = 0.2, color1={255,128,128}, color2={255,128,128} })
-local to_lines = line_store.new("wzcenter_to", {spacing = 0.2, color1={128,255,128}, color2={128,255,128} })
+local from_lines = line_store.new("wzcenter_from", {spacing = 0.2, color1={255,64,64}, color2={255,64,64} })
+local to_lines = line_store.new("wzcenter_to", {spacing = 0.2, color1={64,64,255}, color2={64,64,255} })
+local both_lines = line_store.new("wzcenter_both", {spacing = 0.2, color1={255,128,255}, color2={255,128,255} })
 
 local waypoint_tool_name = "working_villages:waypoint_tool"
 
@@ -59,6 +60,7 @@ local function do_waypoint_flood(user, pos, all_zones)
 			log.action("* waypoint_tool show %s : %s-%s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
 			wayzone_utils.show_particles_wz(wz)
 			from_lines:clear()
+			both_lines:clear()
 			to_lines:clear()
 			local p1 = wz:get_center_pos()
 			--log.action("* wz: %s", dump(wz))
@@ -66,14 +68,20 @@ local function do_waypoint_flood(user, pos, all_zones)
 				log.action("  link_to:   %s xcnt=%d", v.key, v.xcnt)
 				local wz2 = ss:wayzone_get_by_key(v.key)
 				if wz2 then
-					to_lines:draw_line(p1, wz2:get_center_pos())
+					if wz.link_from[k] ~= nil then
+						both_lines:draw_line(p1, wz2:get_center_pos())
+					else
+						to_lines:draw_line(p1, wz2:get_center_pos())
+					end
 				end
 			end
 			for k, v in pairs(wz.link_from) do
 				log.action("  link_from: %s xcnt=%d", v.key, v.xcnt)
 				local wz2 = ss:wayzone_get_by_key(v.key)
 				if wz2 then
-					from_lines:draw_line(vector.offset(p1,0, 0.1,0), vector.offset(wz2:get_center_pos(), 0, 0.1, 0))
+					if wz.link_to[k] == nil then
+						from_lines:draw_line(p1, wz2:get_center_pos())
+					end
 				end
 			end
 			--log.action("* link_to: %s", dump(wz.link_to))

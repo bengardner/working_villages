@@ -783,12 +783,16 @@ local function neighbors_collect_diag(neighbors, args)
 				elseif nidx % 2 == 0 then -- diagonals need to check corners
 					local n_ccw = n_info[dir_add(nidx, -1)]
 					local n_cw = n_info[dir_add(nidx, 1)]
-					if n_ccw.can_walk and n_cw.can_walk then
+					-- both cw and ccw have to be at the same height to go diag
+					if n_ccw.can_walk and n_ccw.gpos and n_cw.can_walk and n_cw.gpos and
+					    n_cw.gpos.y == n_ccw.gpos.y and args.pos.y == n_ccw.gpos.y and info.gpos.y == n_cw.gpos.y
+					then
 						-- 14 for diag, 8 for each node drop
 						cost = 14 + (8 * dy)
+						--log.action("corner allowed %s - %s", minetest.pos_to_string(info.gpos), minetest.pos_to_string(n_cw.gpos))
 					end
 				else
-					-- 10 for diag, 8 for each node drop
+					-- 10 for move, 8 for each node drop
 					cost = 10 + (8 * dy)
 				end
 			end
