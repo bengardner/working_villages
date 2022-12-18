@@ -542,10 +542,8 @@ end
 
 --[[
 Find a series of wayzones that contain a path from start_pos to target_pos.
-FIXME: The cost estimate calculation sucks. This will not get an optimal path.
-       It gets fairly close, though.
 FIXME: We need to set some bounds around the search or this could scan a lot
-       of chunks! Maybe the whole map. This currently limited to 1000 steps,
+       of chunks! Maybe the whole loaded map. This currently limited to 1000 steps,
        which means up to 2000 chunks can be checked.
 ]]
 function wayzone_store:find_path(start_pos_raw, target_pos)
@@ -729,8 +727,6 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 		--return wzpath
 	end
 
-	local fwd_zero = false
-	local rev_zero = false
 	-- NOTE: "steps" is to prevent infinite loop/hang due to coding error.
 	--       It limits the number of chunks examined. Better would be to set
 	--       search limits.
@@ -743,16 +739,6 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 
 		log.action("wayzone.find_path step fwd=%s [%d] rev=%s [%d]",
 			ff.cur.key, fwd.posSet.count, rr.cur.key, rev.posSet.count)
-		if fwd_zero and fwd.posSet.count == 0 then
-			log.action("wayzone.find_path fwd zero %s", ff.cur.key)
-			markers:add(ff.cur.spos, "zero")
-			ff.cur.tpos = ff.cur.spos
-		end
-		if rev_zero and rev.posSet.count == 0 then
-			log.action("wayzone.find_path rev zero %s", rr.cur.key)
-			markers:add(rr.cur.spos, "zero")
-			rr.cur.tpos = rr.cur.spos
-		end
 
 		-- does the fwd node join a rev closed record?
 		if ff.cur.key == di.wz.key or rev.posSet:get(ff.cur.key) ~= nil then
@@ -786,6 +772,12 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 				tgt_info = si
 			end
 
+			if xx_wz.ztype == "choke_point" then
+				log.action("wayzone.find_path choke %s", xx.cur.key)
+				markers:add(xx_wz:get_center_pos(), "choke")
+				xx.cur.tpos = xx.cur.spos
+			end
+
 			-- Add an entry for each link from this wayzone
 			for _, link in pairs(link_tab) do
 				local link_wzc = adj_hash[link.chash]
@@ -796,7 +788,14 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 					log.warning("   + no WZC !! for %s", link.key)
 				else
 					local link_wz = link_wzc[link.index]
-					if link_wz then
+					-- don't go into a dead end or dead_end zone
+					if not link_wz or link_wz.ztype == "dead_end" then
+						-- do not/cannot enter
+					elseif xx_wz.dead_end ~= true and link_wz.dead_end == true then
+						-- do not enter a dead_end_zone
+						-- the other direction will have to come to us
+						-- FIXME: need to pause this walker when empty
+					else
 						--log.action("   + hit")
 						local new_spos = link_wz:get_closest(xx.cur.spos)
 						local new_gCost = pathfinder.get_estimated_cost(xx.cur.spos, new_spos)
@@ -818,10 +817,6 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 				end
 			end
 		end
-
-		-- save zero state before adding neighbors
-		fwd_zero = (fwd.posSet.count == 0)
-		rev_zero = (rev.posSet.count == 0)
 
 		do_neighbors(fwd, ff, true)
 		do_neighbors(rev, rr, false)

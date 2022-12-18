@@ -47,7 +47,7 @@ local function do_waypoint_flood(user, pos, all_zones)
 
 	if all_zones then
 		for idx, wz in ipairs(ii.wzc) do
-			log.action("* waypoint_tool show %s : %s-%s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
+			log.action("* waypoint_tool show %s : %s-%s %s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp), wz.ztype)
 			wayzone_utils.show_particles_wz(wz)
 			--local close_pos = wz:get_closest(upos)
 			--if close_pos ~= nil then
@@ -57,7 +57,9 @@ local function do_waypoint_flood(user, pos, all_zones)
 	else
 		if ii.wz ~= nil and ii.wz:inside(pos) then
 			local wz = ii.wz
-			log.action("* waypoint_tool show %s : %s-%s", wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp))
+			log.action("* waypoint_tool show %s : %s-%s %s lc %d/%d/%d",
+				wz.key, minetest.pos_to_string(wz.minp), minetest.pos_to_string(wz.maxp), wz.ztype,
+				wz.link_to_cnt, wz.link_from_cnt, wz.link_any_cnt)
 			wayzone_utils.show_particles_wz(wz)
 			from_lines:clear()
 			both_lines:clear()

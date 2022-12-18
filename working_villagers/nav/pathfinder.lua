@@ -1031,9 +1031,9 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 
 	local h_start = get_estimated_cost(start_pos, target_pos)
 
-	log.action("find_path: start %s dest %s hCost=%d debug=%s options=%s",
+	log.action("find_path: start %s dest %s hCost=%d debug=%s",
 		minetest.pos_to_string(start_pos),
-		minetest.pos_to_string(target_pos), h_start, tostring(args.debug), dump(options))
+		minetest.pos_to_string(target_pos), h_start, tostring(args.debug))
 
 	-- create a custom inside function if there is none defined
 	if target_inside == nil then

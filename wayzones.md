@@ -1007,3 +1007,88 @@ XXXXX
 ```
 
 All that needs to be saved for a wayzone is the bit array of nodes where we can stand. (64 bytes)
+
+
+## Classification Of Wayzones
+
+### Island ("island")
+
+There are no links to other wayzones. Essentially a jail.
+
+Teleportation or some other forced movement is the only way to get there.
+
+The MOB can wander freely inside the zone.
+
+
+### Exit Only ("exit_only")
+
+If there are exits (link_to_cnt > 0), but no entrances (link_from_cnt == 0), then the wayzone is exit only.
+
+Teleportation or some other forced movement is the only way to get there.
+
+This is as simple as a 2-high stack of blocks if jump_height=1.
+
+
+### Trap ("enter_only")
+
+If there are entrances (link_from_cnt > 0), but no exits (link_to_cnt == 0), then the wayzone is a trap.
+
+This is a pit of depth fear_height if fear_height > jump_height.
+
+A NPC will need to place ladders or blocks to get out. Without that ability, it will eventually die.
+
+
+### Dead End ("dead_end")
+
+If there is exactly one two-way connection to another wayzone, then the zone is a dead-end.
+
+This means you can only go back the way you came in.
+
+There is no point in exploring a "dead_end" zone. (discarded at the neighbor link step)
+
+
+### Choke point ("choke_point")
+
+If there are the following links, then the wayzone is a chokepoint or hallway.
+
+ - at least one input
+ - at least one output
+ - exactly two different wayzones
+
+This can be two one-way connections to two different wayzones. (A -> S -> B)
+
+Or it can be two two-way connections. (A <=> S <=> B)
+
+Or any combination. (A => S <=> B)
+
+When one of these is in the path, the "target position" is set to a position in this wayzone until the wayzone is reached.
+
+
+### Normal
+
+A normal wayzone has 3 or more connected wayzones.
+
+
+## Propagating "dead_end" (probably not going to do it)
+
+It should be possible to propagate "dead_end" status to the last "choke_point" that can reach the dead_end. All wayzones behind that choke_point should be marked as "dead_end_zone".
+
+This is done with a "flood-fill" from a dead_end zone. Perhaps take steps. If at any point there is only one "zone walker" and it is in a "choke_point", then that is the last choke_point.
+All visited zones to that point are marked as a dead_end_zone.
+
+The search should end after, say, 20 steps.
+
+Unfortunately, that would have to be repeated if *any* of the involved chunks are dirtied.
+
+This can be used as follows:
+
+  - a "zone walker" may not follow a link into a wayzone marked "dead_end_zone" unless it is currently in a "dead_end_zone".
+  - a "zone walker" may leave a "dead_end_zone"
+
+This means the "find neighbor links" step will discard neighbors that enter a dead_end_zone. The direction will be marked as paused, so if the direction runs out of walkers, it will not terminate the search, but rather continue in the other direction.
+
+If both end points are in a "dead_end_zone" then both search toward each other. Both may leave the dead_end_zone, but may not enter another.
+
+If a house has exactly 1 door, then this will prevent a walker from exploring the inside of a house unless and endpoint is in the house.
+
+It a house has 2 or more doors, a path may happily go through the house. (Need FIX for this.)

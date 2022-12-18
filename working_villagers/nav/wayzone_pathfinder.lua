@@ -53,9 +53,9 @@ function wayzone_path.start(start_pos, target_pos, args)
 	local target_bpos = vector.new(target_pos.x, target_pos.y-1, target_pos.z)
 	local target_bnode = minetest.get_node(target_bpos)
 
-	log.action(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s]) args=%s",
+	log.action(" wayzone_path.start: %s [%s] (below [%s]) to %s [%s] (below [%s])",
 		minetest.pos_to_string(start_pos), start_node.name, start_bnode.name,
-		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name, dump(args))
+		minetest.pos_to_string(target_pos), target_node.name, target_bnode.name)
 
 	args = args or {}
 	self.ss = args.store or wayzone_store.get(args)

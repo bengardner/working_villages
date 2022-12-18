@@ -471,6 +471,25 @@ end
 --	end
 --end
 
+local function refresh_ztype(self)
+	local ztype
+	if self.link_any_cnt == 0 then
+		ztype = "island"
+	elseif self.link_to_cnt == 0 and self.link_from_cnt > 0 then
+		ztype = "enter_only"
+	elseif self.link_to_cnt > 0 and self.link_from_cnt == 0 then
+		ztype = "exit_only"
+	elseif self.link_any_cnt == 1 then
+		ztype = "dead_end"
+		self.dead_end = true
+	elseif self.link_any_cnt == 2 then
+		ztype = "choke_point"
+	else
+		ztype = "normal"
+	end
+	self.ztype = ztype
+end
+
 --[[
 Flatten the 'visited' bitarray to a string, which uses at most chunk_bytes.
 If CS=8, chunk_bytes is 64 bytes (8x8x8/8).
@@ -513,6 +532,8 @@ function wayzone:finish(flags)
 
 	-- update the center position
 	wayzone_calc_center(self)
+
+	refresh_ztype(self)
 end
 
 --[[
@@ -823,12 +844,38 @@ end
 
 -- record that we have a link to self to @to_wz
 function wayzone:link_add_to(to_wz, xcnt)
+	if self.link_to[to_wz.key] == nil then
+		self.link_to_cnt = self.link_to_cnt + 1
+
+		local any_val = self.link_any[to_wz.key]
+		if any_val == nil then
+			any_val = 1
+			self.link_any_cnt = self.link_any_cnt + 1
+		else
+			any_val = bit.bor(any_val, 1)
+		end
+		self.link_any[to_wz.key] = any_val
+	end
 	self.link_to[to_wz.key] = { chash=to_wz.chash, index=to_wz.index, key=to_wz.key, xcnt=xcnt }
+	refresh_ztype(self)
 end
 
 -- record that we have a link from @from_wz to self
 function wayzone:link_add_from(from_wz, xcnt)
+	if self.link_from[from_wz.key] == nil then
+		self.link_from_cnt = self.link_from_cnt + 1
+
+		local any_val = self.link_any[from_wz.key]
+		if any_val == nil then
+			any_val = 2
+			self.link_any_cnt = self.link_any_cnt + 1
+		else
+			any_val = bit.bor(any_val, 2)
+		end
+		self.link_any[from_wz.key] = any_val
+	end
 	self.link_from[from_wz.key] = { chash=from_wz.chash, index=from_wz.index, key=from_wz.key, xcnt=xcnt }
+	refresh_ztype(self)
 end
 
 -- check if we have a link to the wayzone
@@ -844,9 +891,11 @@ function wayzone:link_test_from(from_wz)
 	return self.link_from[to_wz.key] ~= nil
 end
 
+-- returns new table, count
 local function wayzone_link_filter(link_tab, chash)
 	-- do a scan to see if we need to change anything
 	local found = false
+	local count = 0
 	for _, ni in pairs(link_tab) do
 		--log.action("wayzone_link_filter: check %s %x vs %x", ni.key, ni.chash, chash)
 		if ni.chash == chash then
@@ -854,26 +903,29 @@ local function wayzone_link_filter(link_tab, chash)
 			--log.action("wayzone_link_filter: found %x", chash)
 			break
 		end
+		count = count + 1
 	end
 	if found then
+		count = 0
 		-- build a list of all we are keeping and replace self.link_out
 		local link_new = {}
 		for _, ni in pairs(link_tab) do
 			if ni.chash ~= chash then
 				--log.action("wayzone_link_filter: keep %s", ni.key)
 				link_new[ni.key] = ni
+				count = count + 1
 			end
 		end
-		return link_new
+		return link_new, count
 	end
-	return link_tab
+	return link_tab, count
 end
 
 -- delete all links to wayzones in the chunk described by other_chash
 function wayzone:link_del(other_chash)
 	--log.action("wayzone:link_del self=%s other=%x", self.key, other_chash)
-	self.link_to = wayzone_link_filter(self.link_to, other_chash)
-	self.link_from = wayzone_link_filter(self.link_from, other_chash)
+	self.link_to, self.link_to_cnt = wayzone_link_filter(self.link_to, other_chash)
+	self.link_from, self.link_from_cnt = wayzone_link_filter(self.link_from, other_chash)
 end
 
 --[[
@@ -926,7 +978,13 @@ function wayzone.new(cpos, index)
 	-- wz.visited_count = number of visited entries after finish
 	-- the neighbor entries are only the chash, index, and key fields from the wayzone
 	wz.link_to = {}   -- links to other wayzones, key=other_wz.key
+	wz.link_to_cnt = 0
 	wz.link_from = {} -- links from other wayzones, key=other_wz.key
+	wz.link_from_cnt = 0
+	wz.link_any = {}   -- link with other wayzones, key=other_wz.key, val=number b0=to, b1=from (1,2,3)
+	wz.link_any_cnt = 0
+	-- self.ztype = "" -- once finished, this is a classification of the wayzone
+	-- self.dead_end -- set if the zone is part of a dead_end zone
 	return setmetatable(wz, { __index = wayzone })
 end
 
