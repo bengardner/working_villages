@@ -48,6 +48,8 @@ local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local marker_store = working_villages.require("nav/marker_store")
 local markers = marker_store.new("dots", {texture="wayzone_node.png", yoff=-0.2})
+local line_store = working_villages.require("nav/line_store")
+local cp_lines = line_store.new("chokept", {color1={0,128,0},color2={0,128,0}})
 
 local line_gen = working_villages.require("nav/line_gen")
 
@@ -548,6 +550,7 @@ FIXME: We need to set some bounds around the search or this could scan a lot
 ]]
 function wayzone_store:find_path(start_pos_raw, target_pos)
 	markers:clear()
+	cp_lines:clear()
 
 	-- Grab the wayzone for start_pos and end_pos
 	local start_pos = self:round_position(start_pos_raw)
@@ -634,6 +637,9 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 	-- reverse sequence
 	-- append ref to end
 	local function dual_rollup(ref_key)
+		log.action("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key)
+		log_all()
+
 		for _, item in pairs(fwd.posSet.data) do
 			local wz = self:wayzone_get_by_key(item.cur.key)
 			markers:add(item.cur.spos, string.format("fc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
@@ -645,10 +651,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			--markers:add(wz:get_center_pos(), string.format("rc=%d,%d,%d", item.gCost, item.hCost, item.hCost + item.gCost))
 		end
 
-		log.action("** dual_rollup ref=%s start=%s target=%s", ref_key, si.wz.key, di.wz.key)
-		log_all()
-		--log.action("  dual_rollup - start")
-		-- roll up the path and store in wzp.wzpath
+		-- choke points give intermediate waypoints
 		local choke_points = {}
 		local function choke_point_add(cp)
 			local ch = minetest.hash_node_position(cp)
@@ -663,6 +666,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			return old_tgt
 		end
 
+		-- roll up the path and store in wzp.wzpath
 		local rev_wzpath = {}
 		local cur = fwd.posSet:get(ref_key)
 		local tgt_pos = di.pos
@@ -677,7 +681,7 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			end
 			cur = fwd.posSet:get(cur.parent_key)
 		end
-		--local wzpath = { si.wz }
+
 		table.insert(rev_wzpath, { wz=si.wz, tpos=tgt_pos })
 		local wzpathi = {}
 		for idx=#rev_wzpath,1,-1 do
@@ -714,13 +718,22 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 			local tgt_pos = di.pos
 			for idx = #wzpath,1,-1 do
 				tgt_pos = choke_point_get(wzpath[idx], tgt_pos)
-				wzpath_cp[idx] = { wz=wzpath[idx], tpos=tgt_pos }
+				local wz = wzpath[idx]
+				if wz.ztype == "choke_point" then
+					tgt_pos = wz:get_center_pos()
+				end
+				wzpath_cp[idx] = { wz=wz, tpos=tgt_pos }
 			end
 
+			local prev_pos = si.pos
 			for idx, ii in ipairs(wzpath_cp) do
 				local wz = ii.wz
 				log.action("  CP [%d] %s -- %s %d => %s", idx, wz.key,
 					minetest.pos_to_string(wz.cpos), wz.index, minetest.pos_to_string(ii.tpos))
+				if not vector.equals(ii.tpos, prev_pos) then
+					cp_lines:draw_line(prev_pos, ii.tpos)
+					prev_pos = ii.tpos
+				end
 			end
 			return wzpath_cp
 		end
@@ -791,10 +804,12 @@ function wayzone_store:find_path(start_pos_raw, target_pos)
 					-- don't go into a dead end or dead_end zone
 					if not link_wz or link_wz.ztype == "dead_end" then
 						-- do not/cannot enter
-					elseif xx_wz.dead_end ~= true and link_wz.dead_end == true then
-						-- do not enter a dead_end_zone
-						-- the other direction will have to come to us
-						-- FIXME: need to pause this walker when empty
+						log.warning("   + [%s] not entering dead_end %s", link_wz.key, minetest.pos_to_string(link_wz.cpos))
+					--elseif xx_wz.dead_end ~= true and link_wz.dead_end == true then
+					--	-- do not enter a dead_end_zone
+					--	-- the other direction will have to come to us
+					--	-- FIXME: need to pause this walker when empty
+					--	log.warning("   + [%s] not transitioning to dead_end zone %s", link.key, minetest.pos_to_string(link.cpos))
 					else
 						--log.action("   + hit")
 						local new_spos = link_wz:get_closest(xx.cur.spos)

@@ -36,7 +36,7 @@ local function do_path_find_with_timer(player, pos1, pos2)
 	marker_store.clear_all()
 	path_lines:clear()
 
-	path_lines:draw_line(pos1, pos2)
+	--path_lines:draw_line(pos1, pos2)
 
 	minetest.log("action",
 		string.format("Path from %s to %s",

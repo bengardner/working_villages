@@ -766,13 +766,20 @@ When doing the flood fill look for spaces where the corner is blocked but the tw
 
 This pass can be done after the wayzone is created based on the visited nodes, although that may lose some on the border.
 
-Patterns to catch (X=blocked, _=visited, o=refnode, ?=don't care)
+Patterns to catch (X=blocked, -=clear, o=refnode, ?=don't care)
 ```
-?X-
-?X-
---o
+?X?  ?X-
+?X-  ?X-
+--o  ?-o
 ```
-This can be rotated 4 ways.
+This can be rotated 4 ways. In other, words, there must be two clear blocks in either direction.
+
+Pattern ignore (X=blocked, _=visited, o=refnode, ?=don't care)
+```
+??XX-
+??X-
+X--o
+```
 
 If a visited node is completely surrounded by edge waypoints and impassible nodes, then the nodes should be turned into another wayzone.
 This will catch openings that are less than 3 wide.

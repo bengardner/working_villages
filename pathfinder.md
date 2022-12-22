@@ -907,6 +907,15 @@ while true do
     best_neighbor = 
 
 
+## Use waypoints connected with straight lines
+
+Simplify the output of the 'waypoint' list so that it included only straight-line segments.
+
+
+This should probably be done at the node-based pathfinder layer, since all complex navigation has been done.
+
+All points within a wayzone should be directly reachable.
+
 
 ## Enhance wayzone-to-wayzone cost estimation
 
@@ -918,15 +927,252 @@ The ref_pos for the second wayzone is the closest accessible node in the wayzone
 That doesn't seem too cheap to calculate.
 
 
+## Handling snow, stairs, slabs, etc
+
+We assume a "walk in" step height of 0.6. In other words, we don't need jump clearance to step up 0.6 nodes.
+
+We need to take into account the collisionbox to fully support variable-sized nodes.
+
+The utility function `func.nodedef_get_collision_box(nodedef, param2)` will determine the appropriate box for the node.
+This takes param2 into account (facedir, colorfacedir, leveled, 4dir, color4dir)
 
 
-### BROKEN
+To check if we can STAND on a node, we find the maximum Y (meaning box[5]) of the rotated collision box.
 
-Don't do a diaganol unless BOTH corners are passible.
+To check if we can ENTER a node (height change), we need to find the maximum Y along the edge the MOB will enter (check 0.25 width box).
+This really only matters with stairs. The height of a stair on the low side is 0.5, so we need floor+height+
+
+To walk into a node (assuming that we already can stand in the current node), we need floor
+
+Side view of heights. A group of 4x4 chars represents 1 node.
+X=solid, .=empty. M=mob, ?=don't care
+"from" is on the left, "to" is on the right
+Height is 1.75. Jump height is 1.25 (to handle snow). Fear Height is 2.5.
+
+This is a slab to slab movement. If the "to" node has a higher floor, then
+the "from" node needs that additional clearance to step into it. Note that we
+span 3 Y nodes, even though the height is 1.75.
 ```
-1   -- must go 1-2-3
-23
+2.75  ???? ????
+2.50  ???? ????
+2.25  ???? ???? <= minimum ceiling height for both nodes (2.25)
+2.00  .MM. .MM. <= top of head
 
-12
-34 -- can go 1-4 directly
+1.75  .MM. .MM.
+1.50  .MM. .MM.
+1.25  .MM. .MM.
+1.00  .MM. .MM.
+
+0.75  .MM. .MM.
+0.50  .MM. .MM. <= feet
+0.25  XXXX XXXX
+0.00  XXXX XXXX
 ```
+
+This is a slab to solid movement. If the "to" node has a higher floor, then
+the "from" node needs that additional clearance to step into it.
+Since the change is less that 0.6 nodes, we don't need to jump.
+```
+2.75  ???? ???? <= minimum ceiling height for both nodes (2.75)
+2.50  .... .MM. <= top of head (right)
+2.25  .... .MM.
+2.00  .MM. .MM. <= top of head (left)
+
+1.75  .MM. .MM.
+1.50  .MM. .MM.
+1.25  .MM. .MM.
+1.00  .MM. .MM. <= feet (right)
+
+0.75  .MM. xxxx
+0.50  .MM. xxxx <= feet (left)
+0.25  XXXX XXXX
+0.00  XXXX XXXX
+```
+
+This is a slab to slab+1 movement.
+Since the change is more than 0.6 nodes, we need to jump. That requires additional
+clearance in both columns.
+```
+     start jmp  done
+3.75  ???? ???? ????
+3.50  ???? ???? ???? <= minimum ceiling height for both nodes (3.5)
+3.25  .... .MM. .... <= top of head (jump top)
+3.00  .... .MM. .MM. <= top of head (right)
+
+2.75  .... .MM. .MM.
+2.50  .... .MM. .MM.
+2.25  .... .MM. .MM.
+2.00  .MM. .MM. .MM. <= top of head (left)
+
+1.75  .MM. .MM. .MM. <= feet (jump)
+1.50  .MM. .... .MM. <= feet (right, after landing)
+1.25  .MM. xxxx xxxx
+1.00  .MM. xxxx xxxx
+
+0.75  .MM. xxxx xxxx
+0.50  .MM. xxxx xxxx <= feet (left)
+0.25  XXXX XXXX XXXX
+0.00  XXXX XXXX XXXX
+```
+
+
+## Precompute blockchunk nav
+
+This is based on a given MOB size, (example, 1.75 tall, 0.5 wide, assume cylindar shape)
+
+Each node needs the following information:
+
+ - can move N, S, E, W, up, down (6 bits) by 1 node
+ - can stand here (1 bit)
+ - solid (not air, cannot fly here)
+
+island:    0x40
+flat land: 0x4f
+ladder:    0x70 (up/down only)
+water:     0x3f
+
+'Can stand here' means that the center of the MOB can be anywhere in this node AND that the height does not collide with a node above.
+
+The top of the collision box and the height are used to determine occupancy.
+
+For MOBs with width <= 1, this requires only that the one node be clear.
+
+For MOBs wider than 1 node, this requires a clear node on either side and a clear diagonal.
+
+For MOBs wider than 2 nodes, this requires a clear node on both sides.
+
+The height is added to the top of the collision box. If it overflows into the next node above, then that node must be clear.
+
+get_stand_height(pos, width, max_height) => ypos, max_height
+Get the height that can be at the the node position. pos is the node position to check. width is the diameter of the circle to test at pos.
+
+
+Width <= 1, waypoints are at node center. Checks 1 node column.
+
+Width <= 2, waypoints are at +0.5 from node center. Checks 4 node columns.
+
+Width <= 3, waypoints are at node center. Checks 9 node columns.
+
+Width <= 4, waypoints are at +0.5 from node center, Checks custom shape 
+```
+_xx_
+xxxx
+xxxx
+_xx_
+```
+
+
++---+---+
+
+
+
+# Layers
+
+This is for my own benefit.
+
+It seems there are several layers to finding a successful path.
+
+Going from the bottom up...
+
+
+## Layer: Execution
+
+This actually moves the MOB. This does a little bit of work on each step.
+
+  - The heading and velocity are adjusted to go to the next waypoint
+  - The animation is set
+  - Jumps as needed when the terrain in front of the MOB is higher than the step height (0.6?)
+    - this is detected via collisions, lack of forward movement or scanning the terrain
+  - Opens doors that are in front of the MOB, closes behind (on a timer?)
+    - May do a complex stand in front of door, open door, walk thrugh door, face door, close door
+  - Non-static obstacles are handled (Objects, not nodes)
+    - walk around the obstacle, if possible
+    - coordinate with other MOB to allow passage
+    - very short paths (3 nodes)
+  - Retrieves the next waypoint when the current one has been reached
+  - Stops walking when out of waypoints
+
+Inputs: next wayzone, collision information, object scan, map data
+
+
+## Layer: Pathfinder
+
+This determines the next waypoint that has a straight-shot path from the current position.
+
+Often implemented using the A* algorithm with waypoints that are 1 node apart (or diagonal).
+
+Inputs: Current Position, Target Position that is *known to be accessible* from the current position, map data
+
+
+## Layer: Planner
+
+This determines the next intermediate target in route to the target.
+
+It uses a zone graph with connections between zones. (You can get there from here.)
+
+Inputs: start position, target positions, zone info with linkages (map data not needed at this level)
+
+Output: a list of areas that the MOB needs to traverse
+
+
+### Data: Map Geometry
+
+The geometry is used to determine where the MOB can be.
+
+That is used to determine where the MOB can move from each position.
+
+The classification of different nodes helps create the zones.
+
+  - water nodes are only used when swimming
+  - doors
+  - top-of-fence
+  - climbable nodes (ladders)
+
+
+### Data: Zone Information
+
+A zone has a list of nodes that are part of the zone. Each node position marks a spot where the MOB can stand.
+
+A zone has a classification to help the planner. For example, door nodes are merged into a separate zone.
+
+Linkages between zones are determined by evaluating moves from nodes in the other zone that are within move distance. If a move goes into the other zone, then they are connected.
+
+Linkages are evaluated by checking one-way moves. To complete the link, checks must be done both ways.
+
+### Data: Restrictions or Labels
+
+Complimentry to the zone information, there are areas that have a label and possibly restrictions.
+
+An area is a collection of boxes. The most obvious use of this type of area is to mark a building.
+
+Think of it like property lines. You must have permission to go through any doors inside an area.
+
+You don't want a MOB to walk through your house as a shortcut when going to the park.
+
+The planner will avoid going into areas where the MOB does not have permission.
+
+For example, a shop may have multiple areas:
+  - An area that covers the store property
+  - An area that covers the store building (can be a tiny bit larger)
+  - An area that covers the "employee only" rooms
+
+Access may vary during the day. For example, non-employees may only enter the building when the store is open. The store opens/closes on a schedule, perhaps when the shopkeeper is present.
+Access is controlled by allowing or disallowing passage through doors. Think of it like the door can be locked at certain times and employees have a key.
+
+Restricted areas should be protected by a door or fence. The planner only checks door access.
+
+#### Areas: Access Control
+
+If a zone falls inside an area, the area permission checker is called to see if the object (MOB) is allowed inside. If not allowed, then the zone will not be considered when planning the route.
+
+Doors are in their own zone, so the area check will be called when checking a door.
+
+#### Occupants
+
+Occupants of a property are listed as part of the building plaque.
+
+Occupants of a dwelling may enter the yard and pass through doors.
+
+Occupants may grant and revoke access to the dewlling.
+
+Parents and children of the occupant are granted access.

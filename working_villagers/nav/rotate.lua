@@ -83,7 +83,10 @@ Rotate a box (node_box, selection_box, collision_box) and sort min/max
 Uses a lookup table, which should be a bit faster than creating two vectors,
 rotating them individually and the assembling the new box with min/max.
 ]]
-function rotate.box_facedir(box, facedir)
+local function rotate_box_facedir(box, facedir)
+	assert(#box >= 6 and type(box[1]) == "number", "bad box")
+	assert(type(facedir) == "number", "bad facedir")
+
 	local ti = (bit.band(facedir, 0x1f) * 6) -- no +1 because start at 1 below
 	-- entry 0 is a no-op
 	if ti > 0 and ti < #facedir_box_str then
@@ -98,6 +101,28 @@ function rotate.box_facedir(box, facedir)
 		return { lookup(1), lookup(2), lookup(3), lookup(4), lookup(5), lookup(6) }
 	end
 	return box
+end
+
+--[[
+Rotate all the boxes in @box.
+@box may be a single box or an array of boxes.
+]]
+function rotate.box_facedir(box, facedir)
+	-- empty table returns nil
+	if type(box) ~= "table" or #box == 0 then
+		return nil
+	end
+
+	-- handle an array of boxes
+	if type(box[1]) ~= "number" then
+		local new_box = {}
+		for _, ob in ipairs(box) do
+			table.insert(new_box, rotate_box_facedir(ob, facedir))
+		end
+		return new_box
+	end
+
+	return rotate_box_facedir(box, facedir)
 end
 
 -- manually do the box rotation

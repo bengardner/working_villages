@@ -6,6 +6,7 @@ local tree_scan = working_villages.require("tree_scan")
 local tool_name = "working_villages:query_tool"
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
+local node_cbox_cache = working_villages.require("nav/node_cbox_cache")
 
 local function log_object(obj)
 	log.action(" + object.get_pos() -> %s",
@@ -207,6 +208,16 @@ local function log_center_top(def)
 	end
 end
 
+local function get_node_floor(pos)
+	local node = minetest.get_node(pos)
+	local nodedef = minetest.registered_nodes[node.name]
+	local cbox = func.nodedef_get_collision_box(nodedef, node.param2)
+	if cbox == nil then
+		return 0
+	end
+	return cbox[5] + 0.5
+end
+
 local function query_tool_do_stuff(user, pointed_thing, is_use)
 	if not did_tool_log then
 		--do_tool_log()
@@ -219,9 +230,12 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		local pos = minetest.get_pointed_thing_position(pointed_thing)
 		local node = minetest.get_node(pos)
 		local nodedef = minetest.registered_nodes[node.name]
+		local node_floor = get_node_floor(pos)
 
-		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s",
-			minetest.pos_to_string(pos), node.name, node.param1, node.param2, minetest.get_node_light(pos))
+		local ni = node_cbox_cache.get_node_info(node)
+
+		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s floor=%s %s",
+			minetest.pos_to_string(pos), node.name, node.param1, node.param2, minetest.get_node_light(pos), tostring(node_floor), dump(ni))
 		if nodedef.paramtype2 == "facedir" then
 			local dir = minetest.facedir_to_dir(node.param2)
 			log.action(" ++ facedir %s rot=%d", minetest.pos_to_string(dir), bit.band(node.param2, 0x1f))

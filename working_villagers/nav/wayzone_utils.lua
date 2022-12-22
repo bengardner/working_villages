@@ -183,6 +183,27 @@ local function wz_visible_line(wz, spos, dpos, loose, is_ok_to_use)
 end
 wayzone_utils.wz_visible_line = wz_visible_line
 
+-- check if a position hash is in the list of zones
+local function hash_in_zone(zones, hash_or_pos)
+	if type(hash_or_pos) == "table" then
+		hash_or_pos = minetest.hash_node_position(hash_or_pos)
+	end
+	for zi, zz in ipairs(zones) do
+		if zz.nodes then
+			if zz.nodes[hash_or_pos] ~= nil then
+				--log.action("in_zone %d: %s %x", zi, minetest.get_position_from_hash(hash_or_pos), hash_or_pos)
+				return true
+			end
+		else
+			if zz[hash_or_pos] ~= nil then
+				--log.action("in_zone %d: %s %x", zi, minetest.get_position_from_hash(hash_or_pos), hash_or_pos)
+				return true
+			end
+		end
+	end
+	return false
+end
+
 --[[
 Do a flood fill search on the the wayzone starting at @pos.
 
@@ -195,40 +216,61 @@ If @lines_only is false, then we can enter any node that isn't "done".
 
 If the flood fill is successful, the all visited nodes are marked "done".
 ]]
-local function flood_fill_pos(wz, meta_map, pos, lines_only)
-	--log.action("flood_fill_pos %s", minetest.pos_to_string(pos))
+local function flood_fill_pos(wz, all_zones, meta_map, pos, ftype, all_corners)
+	log.action("flood_fill_pos %s %s", minetest.pos_to_string(pos), ftype)
 
-	local active = {}
-	local visited = {}
-	local corners = {} -- corners hit
+	local active = {}   -- nodes to explore
+	local visited = {}  -- nodes we looked at
+	local visited_cnt = 0
+	local corners = {}  -- corners we hit while searching
 
 	table.insert(active, pos)
 	while #active > 0 do
-		local cur = active[#active]
+		local cur = active[#active] -- pop last to reduce churn
 		table.remove(active)
-		local hh = minetest.hash_node_position(cur)
-		visited[hh] = cur
+
+		local c_hh = minetest.hash_node_position(cur)
+		if visited[c_hh] == nil then
+			visited[c_hh] = cur
+			visited_cnt = visited_cnt + 1
+		end
+		if meta_map[c_hh] == "corner" then
+			corners[c_hh] = pos
+		end
 		--log.action("flood_fill_pos process: %s", minetest.pos_to_string(cur))
 
-		for _, pp in ipairs(wz_neighbors_nsew(wz, cur)) do
-			local hh = minetest.hash_node_position(pp)
-			-- don't revisit, don't add corners
-			if visited[hh] == nil and active[hh] == nil and meta_map[hh] ~= "done" then
-				if lines_only then
-					if meta_map[hh] == "line" then
-						table.insert(active, pp)
-					elseif meta_map[hh] == "corner" then
+		for _, n_pp in ipairs(wz_neighbors_nsew(wz, cur)) do
+			local n_hh = minetest.hash_node_position(n_pp)
+
+			if visited[n_hh] or active[n_hh] then
+				-- don't revisit a node
+			else
+				-- record corners that we hit
+				if meta_map[n_hh] == "corner" then
+					corners[n_hh] = n_pp
+				end
+				--log.action(" ** %s %s", minetest.pos_to_string(n_pp), meta_map[n_hh])
+
+				if hash_in_zone(all_zones, n_hh) then
+					-- but only process if not in another zone
+				elseif ftype == "line" then
+					if meta_map[n_hh] == "line" then
+						table.insert(active, n_pp)
+					elseif meta_map[n_hh] == "corner" then
 						-- this is OK
-						table.insert(corners, pp)
 					else
 						-- FAIL: when tracing lines, we can only hit a line or corner
+						-- anything else invalidates the zone
 						return nil
 					end
-				else
-					table.insert(active, pp)
-					if meta_map[hh] == "corner" then
-						table.insert(corners, pp)
+				elseif ftype == "corner" then
+					if meta_map[n_hh] == "corner" then
+						-- can only walk on corners
+						table.insert(active, n_pp)
 					end
+				else
+					-- can walk to anything
+					table.insert(active, n_pp)
 				end
 			end
 		end
@@ -241,35 +283,258 @@ local function flood_fill_pos(wz, meta_map, pos, lines_only)
 	  X.c
 	   c
 	]]
-	if #corners == 2 and math.abs(corners[1].x - corners[2].x) == 1 and math.abs(corners[1].z - corners[2].z) == 1 then
-		return nil
-	end
+	--if #corners == 2 and math.abs(corners[1].x - corners[2].x) == 1 and math.abs(corners[1].z - corners[2].z) == 1 then
+	--	return nil
+	--end
 
 	-- mark all the visited nodes as "done"
-	for hh, _ in pairs(visited) do
-		meta_map[hh] = 'done'
+	--for hh, _ in pairs(visited) do
+	--	meta_map[hh] = 'done'
+	--end
+	local corners_list = {}
+	local corners_cnt = 0
+	for hh, pp in pairs(corners) do
+		table.insert(corners_list, hh)
+		corners_cnt = corners_cnt + 1
 	end
 	-- all the nodes are now in visited
 	--log.action("flood_fill_pos visited: %s", dump(visited))
-	return visited, corners
+	return visited, visited_cnt, corners, corners_cnt
 end
 
--- check if a position hash is in the list of zones
-local function hash_in_zone(zones, hash_or_pos)
-	if type(hash_or_pos) == "table" then
-		hash_or_pos = minetest.hash_node_position(hash_or_pos)
+--[[
+Eliminate zones that are not needed.
+1. An single-node zone that is only bordered by corner zone(s) should be combined
+   with the corner zone(s).
+
+]]
+local function reduce_zones(wz, in_zones)
+	local function log_zz(zz)
+		local ss = {}
+		table.insert(ss, string.format("type=%s node_cnt=%d corner_cnt=%d corners:", zz.type, zz.count, zz.corners_cnt))
+		for hh, pp in pairs(zz.corners) do
+			table.insert(ss, minetest.pos_to_string(pp))
+		end
+		table.insert(ss, "nodes")
+		for hh, pp in pairs(zz.nodes) do
+			table.insert(ss, minetest.pos_to_string(pp))
+		end
+		log.action("Zone: %s", table.concat(ss, " "))
 	end
-	for zi, zz in ipairs(zones) do
-		if zz[hash_or_pos] ~= nil then
-			--log.action("in_zone %d: %s %x", zi, minetest.get_position_from_hash(hash_or_pos), hash_or_pos)
-			return true
+
+	local function find_by_hash(hh)
+		-- NOTE: using pairs() because we may punch holes in the array
+		for ii, zz in pairs(in_zones) do
+			if zz.nodes[hh] ~= nil then
+				return zz
+			end
+		end
+		return nil
+	end
+
+	local function merge_entries(dst, src, new_type)
+		if not src or not dst then
+			return
+		end
+		log.action("Merging")
+		log_zz(src)
+		log.action("  into")
+		log_zz(dst)
+		dst.type = new_type
+		for h, p in pairs(src.corners) do
+			if dst.corners[h] == nil then
+				dst.corners[h] = p
+				dst.corners_cnt = dst.corners_cnt + 1
+			end
+		end
+		for h, p in pairs(src.nodes) do
+			if dst.nodes[h] == nil then
+				dst.nodes[h] = p
+				dst.count = dst.count + 1
+			end
+		end
+		src.type = "deleted"
+		src.corners = {}
+		src.corners_cnt = 0
+		src.count = 0
+		src.nodes = {}
+		log.action("Result")
+		log_zz(dst)
+	end
+
+	-- merge isolated nodes with the corner(s)
+	for idx, zz in pairs(in_zones) do
+		if zz.count == 1 and zz.corners_cnt > 0 then
+			local do_merge = false
+			if zz.type == "" then
+				do_merge = true
+			elseif zz.type == "line" and zz.corners_cnt == 2 then
+				-- only merge if the corners are next to each other
+				local cx = {}
+				for hh, pp in pairs(zz.corners) do
+					table.insert(cx, pp)
+				end
+				if math.abs(cx[1].x - cx[2].x) == 1 and math.abs(cx[1].z - cx[2].z) == 1 then
+					log.warning(" doing corner merge")
+					do_merge = true
+				end
+			end
+			if do_merge then
+				for c_hash, c_pos in pairs(zz.corners) do
+					merge_entries(zz, find_by_hash(c_hash), "corner")
+				end
+			end
 		end
 	end
-	return false
+
+	-- merge isolated corners other area(s)
+	for idx, zz in pairs(in_zones) do
+		if zz.type == "corner" then
+			local last_zz = nil
+			local can_merge = true
+			for c_hash, c_pos in pairs(zz.nodes) do
+				if not can_merge then
+					break
+				end
+				for _, n_pp in ipairs(wz_neighbors_nsew(wz, c_pos)) do
+					local n_hh = minetest.hash_node_position(n_pp)
+					local c_zz = find_by_hash(n_hh)
+					if c_zz then
+						if last_zz == nil then
+							last_zz = c_zz
+						elseif last_zz ~= c_zz then
+							can_merge = false
+							break
+						end
+					end
+				end
+			end
+
+			if can_merge then
+				merge_entries(zz, last_zz, "")
+			end
+		end
+	end
+
+	--local changed = true
+	--while changed do
+	--	for idx, zz in pairs(in_zones) do
+	--		local zz = in_zones[idx]
+	--		if zz.count == 1 and #zz.corners > 0 then
+	--			for _, hh in pairs(zz.corners) do
+	--				nzz = merge_zone_containing_hash(idx, hh)
+	--			end
+	--			changed = true
+	--			in_zones[idx] = nzz
+	--			break -- restart scan
+	--		end
+	--	end
+	--end
+
+	-- convert to final layout
+	local out_zones = {}
+	for _, zz in ipairs(in_zones) do
+		if zz.count > 0 then
+			table.insert(out_zones, zz.nodes)
+		end
+	end
+	return out_zones
+end
+
+--[[
+REVISIT:
+ - Put all adjacent "corner" nodes into separate zones
+ - flood-fill remaining areas to create new zones
+ - any new zone that can only go into the same corner zone should be absorbed
+ - any corner area that can only go into one other zone should be absorbed
+
+]]
+local function flood_fill_zone(wz, meta_map, fill_unused)
+	local all_zones = {}
+
+	-- flood_fill_pos() alters meta_map, so we need to extract lines first
+	local lines = {}
+	local corners = {}
+	local all_corners = {}
+	for hh, tt in pairs(meta_map) do
+		if tt == "corner" then
+			table.insert(corners, hh)
+			all_corners[hh] = minetest.get_position_from_hash(hh)
+		elseif tt == "line" then
+			table.insert(lines, hh)
+		end
+	end
+
+	local function do_the_fill(pos, mtype)
+		local vv, vc, co, cc = flood_fill_pos(wz, all_zones, meta_map, pos, mtype)
+		if vv then
+			table.insert(all_zones, {nodes=vv, count=vc, corners=co, corners_cnt=cc, type=mtype})
+		end
+	end
+
+	-- flood fill lines
+	for _, hh in ipairs(lines) do
+		if not hash_in_zone(all_zones, hh) then
+			do_the_fill(minetest.get_position_from_hash(hh), "line")
+		end
+	end
+
+	-- flood fill corners
+	for _, hh in ipairs(corners) do
+		if not hash_in_zone(all_zones, hh) then
+			local pos = minetest.get_position_from_hash(hh)
+			do_the_fill(minetest.get_position_from_hash(hh), "corner")
+		end
+	end
+
+	-- flood fill everything else
+	for pos in wz:iter_visited() do
+		local hh = minetest.hash_node_position(pos)
+		if not hash_in_zone(all_zones, hh) then
+			do_the_fill(minetest.get_position_from_hash(hh), "")
+		end
+	end
+
+	--for _, hh in ipairs(lines) do
+	--	if not hash_in_zone(all_zones, hh) then
+	--		local pos = minetest.get_position_from_hash(hh)
+	--		local ff, cc = flood_fill_pos(wz, meta_map, pos, "line")
+	--		if ff then
+	--			--log.action("ff=%s cc=%s", dump(ff), dump(cc))
+	--			table.insert(all_zones, ff)
+	--		end
+	--	end
+	--end
+	--
+	--if fill_unused then
+	--	-- try all left-overs
+	--	for pos in wz:iter_visited() do
+	--		local hh = minetest.hash_node_position(pos)
+	--		if not hash_in_zone(all_zones, hh) then
+	--			local ff = flood_fill_pos(wz, meta_map, pos, "")
+	--			if ff then
+	--				table.insert(all_zones, ff)
+	--			end
+	--		end
+	--	end
+	--end
+	--
+	---- log the zones and visually show them
+	--log.warning("there are %s zones", #all_zones)
+	--if #all_zones > 1 then
+	--	for zi, zz in ipairs(all_zones) do
+	--		for hh, _ in pairs(zz) do
+	--			local pos = minetest.get_position_from_hash(hh)
+	--			markers:add(vector.offset(pos, 0, zi, 0), tostring(zi), wz_colors[zi])
+	--		end
+	--	end
+	--	return all_zones
+	--end
+	return reduce_zones(wz, all_zones)
 end
 
 -- Build a list of zones that are made up of "line" nodes.
-local function flood_fill_zone(wz, meta_map, fill_unused)
+local function flood_fill_zone_old(wz, meta_map, fill_unused)
 	local all_zones = {}
 
 	-- flood_fill_pos() alters meta_map, so we need to extract lines first
@@ -282,7 +547,7 @@ local function flood_fill_zone(wz, meta_map, fill_unused)
 	for _, hh in ipairs(lines) do
 		if not hash_in_zone(all_zones, hh) then
 			local pos = minetest.get_position_from_hash(hh)
-			local ff, cc = flood_fill_pos(wz, meta_map, pos, true)
+			local ff, cc = flood_fill_pos(wz, all_zones, meta_map, pos, "line")
 			if ff then
 				--log.action("ff=%s cc=%s", dump(ff), dump(cc))
 				table.insert(all_zones, ff)
@@ -295,7 +560,7 @@ local function flood_fill_zone(wz, meta_map, fill_unused)
 		for pos in wz:iter_visited() do
 			local hh = minetest.hash_node_position(pos)
 			if not hash_in_zone(all_zones, hh) then
-				local ff = flood_fill_pos(wz, meta_map, pos, false)
+				local ff = flood_fill_pos(wz, all_zones, meta_map, pos, "")
 				if ff then
 					table.insert(all_zones, ff)
 				end
@@ -317,6 +582,48 @@ local function flood_fill_zone(wz, meta_map, fill_unused)
 	return all_zones
 end
 
+--[[
+Check if a node looks like a corner.
+A diagonal must be blocked/missing and the neighbor NSEW must be clear.
+There also must be an additional 1 node clear in the neighbor direction.
+]]
+local function wz_is_corner(wz, pos)
+	local nn = wz_neighbors(wz, pos)
+	for ii=2,8,2 do -- check 2,4,6,8 (diagonals)
+		local ii_cw = ii - 1
+		local ii_ccw = dir_add(ii, 1)
+		if (not nn[ii]) and nn[ii_ccw] and nn[ii_cw] then
+			-- We need one more good spot in the dir of ii_cw or ii_ccw
+			local xpl = { ii_ccw, ii_cw } --np=, enp=, vector.add(nn[ii_cw], dir_vectors[ii_cw]) }
+			for _, xp_i in ipairs(xpl) do
+				local xp = vector.add(nn[xp_i], dir_vectors[xp_i])
+				if wz_neighbor_pos(wz, xp) ~= nil then
+					-- and lastly, we must be unable to go to the corner
+					local c_pos = vector.add(pos, dir_vectors[ii])
+					local yes_cnt = 0
+					for _, xp2 in ipairs(xpl) do
+						c_pos.y = nn[xp2].y
+						log.warning("corner: %s test %s cw=%s ccw=%s",
+							minetest.pos_to_string(pos), minetest.pos_to_string(c_pos),
+							minetest.pos_to_string(nn[ii_cw]), minetest.pos_to_string(nn[ii_ccw]))
+						local d_pos = wz_neighbor_pos(wz, c_pos)
+						if d_pos == nil then
+							log.action("corner: yes, is a corner")
+							yes_cnt = yes_cnt + 1
+						else
+							log.action("corner: no, not a corner %s", minetest.pos_to_string(d_pos))
+						end
+					end
+					if yes_cnt == 2 then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
 local function detect_edges(wz)
 	--log.action("detect_edges: %s", tostring(wz.key))
 	local edges = {}
@@ -324,16 +631,10 @@ local function detect_edges(wz)
 
 	-- detect and label corners
 	for pos in wz:iter_visited() do
-		local nn = wz_neighbors(wz, pos)
-		--log.action(" -- %s => %s", minetest.pos_to_string(pos), dump(nn))
-		-- testing N/S/E/W
-		for ii=2,8,2 do
-			if (not nn[ii]) and nn[ii-1] and nn[dir_add(ii,1)] then
-				--log.warning("corner %s", minetest.pos_to_string(pos))
-				table.insert(edges, {pos=pos})
-				meta_map[minetest.hash_node_position(pos)] = "corner"
-				break
-			end
+		if wz_is_corner(wz, pos) then
+			--log.warning("corner %s", minetest.pos_to_string(pos))
+			table.insert(edges, {pos=pos})
+			meta_map[minetest.hash_node_position(pos)] = "corner"
 		end
 	end
 
@@ -384,16 +685,46 @@ local function same_table_keys(a, b)
 end
 
 --[[
+Split the wayzone into smaller chunks to ease planning.
+
+If the wayzone is a "climb" area:
+ 1. Split the top-most node(s) into its own wayzone
+ 2. Split the bottom-most node(s) into its own wayzone
+
+If the wayzone is a "fence" area:
+ 1. split based on visibility will usually end up with 4 zones for a boxed area
+
+It the wayzone is a "water" area:
+ 1. Do not split, return nil
+
+It the wayzone is a "door" area:
+ 1. Do not split, return nil
+
+Other (regular ground) area:
 Split the wayzone based on corners.
-1. find all corners. if no corners, return nil
-2. draw lines between visible corners and mark nodes as "line"
-3. Find groups of "line" nodes that are surrounded by "corner" and impassible nodes
-4. Group remaining nodes based on the closest corner
-5. If we have only one group, then return nil
+ 1. find all corners. if no corners, return nil
+ 2. draw lines between visible corners and mark nodes as "line"
+ 3. Find groups of "line" nodes that are surrounded by "corner" and impassible nodes
+ 4. Group remaining nodes based on the closest corner
+ 5. If we have only one group, then return nil
 
 @return array of tables of the form: [hash] = pos
 ]]
 function wayzone_utils.wz_split(wz)
+	if wz.in_door or wz.in_water then
+		return nil
+	end
+	if wz.on_fence then
+		-- TODO: split based on visibility
+		return nil
+	end
+	if wz.in_climb then
+		-- TODO: make sure the area is box-like (uniform width, height)
+		-- TODO: split off the top-most row
+		return nil
+	end
+
+	-- splitting "normal" ground wayzone by corners
 	local edges, meta_map = detect_edges(wz)
 
 	-- extract corner info
@@ -404,7 +735,7 @@ function wayzone_utils.wz_split(wz)
 			local cc = { pos=minetest.get_position_from_hash(hh), nodes={}, owned={} }
 			corners[hh] = cc
 			ncorner = ncorner + 1
-			--corner_markers:add(cc.pos, "corner", wz_colors[1])
+			corner_markers:add(cc.pos, "corner", wz_colors[1])
 		end
 	end
 	if not next(corners) then

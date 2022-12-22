@@ -1374,13 +1374,13 @@ function wayzone:link_other(other)
 	-- s_box covers all start nodes that can land in other
 	local s_box = { minp=vector.offset(other.minp, -1, -1, -1),
 	                maxp=vector.offset(other.maxp, 1, 2, 1) }
-	dbg("link_other: s_box=%s-%s start nodes that might land in other",
-		minetest.pos_to_string(s_box.minp), minetest.pos_to_string(s_box.maxp))
+	--dbg("link_other: s_box=%s-%s start nodes that might land in other",
+	--	minetest.pos_to_string(s_box.minp), minetest.pos_to_string(s_box.maxp))
 
 	-- intersect to find nodes that should be iterated
 	local is_box = box_intersection(self, s_box)
 	if not is_box then
-		dbg("link_other: not possible")
+		dbg("link_other: no overlap")
 		return
 	end
 	dbg("link_other: is_box=%s-%s box that we should iterate on",

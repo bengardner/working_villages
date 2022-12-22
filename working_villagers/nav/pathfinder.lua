@@ -1027,7 +1027,7 @@ function pathfinder.find_path(start_pos, target_area, entity, options)
 	local target_hash = minetest.hash_node_position(target_pos)
 	local target_inside = target_area.inside
 
-	path_lines:draw_line(start_pos, target_pos)
+	--path_lines:draw_line(start_pos, target_pos)
 
 	local h_start = get_estimated_cost(start_pos, target_pos)
 

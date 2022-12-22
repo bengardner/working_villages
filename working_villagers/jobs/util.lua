@@ -746,7 +746,7 @@ function func.box_minmax(boxes)
 		return boxes
 	end
 	local nb = table.copy(boxes[1])
-	for idx=2, #box do
+	for idx=2, #boxes do
 		local bb = boxes[idx]
 		for ii=1,3 do
 			nb[ii] = math.min(nb[ii], bb[ii])
@@ -779,6 +779,9 @@ function func.nodedef_get_collision_box(nodedef, param2)
 			local p2
 			if nodedef.paramtype2 == "facedir" or nodedef.paramtype2 == "colorfacedir" then
 				p2 = bit.band(param2, 0x1f)
+				box = rotate.box_facedir(box, p2)
+			elseif nodedef.paramtype2 == "4dir" or nodedef.paramtype2 == "color4dir" then
+				p2 = bit.band(param2, 3)
 				box = rotate.box_facedir(box, p2)
 			end
 			return box, p2
