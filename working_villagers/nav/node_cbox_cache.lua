@@ -1,7 +1,7 @@
 --[[
 A little cache for node collision boxes.
 
-The function `get_node_info(node)` returns the useful info.
+The function `get_node_cbox(node)` returns the useful info.
 
 There are several keys in the results:
  - top   : floor height for standing in the node
@@ -83,7 +83,7 @@ local function box_intersection(box1, box2)
 		math.min(box1[5], box2[5]),
 		math.min(box1[6], box2[6])
 	}
-	log.action("box_inter %s %s => %s", box_tostring(box1), box_tostring(box2), box_tostring(res))
+	--log.action("box_inter %s %s => %s", box_tostring(box1), box_tostring(box2), box_tostring(res))
 	return res
 end
 
@@ -206,6 +206,10 @@ node_cbox_cache.node_get_collision_box = node_get_collision_box
 
 local info_cache = {}
 
+local function float_close(a, b, delta)
+	return math.abs(a - b) < delta
+end
+
 -- split for edges: 0.2 + 0.6 + 0.2 (left, middle, right)
 local box_xy = {
 	[""]   = { -0.50, -0.50, -0.50,  0.50, 0.50,  0.50 }, -- full
@@ -216,23 +220,26 @@ local box_xy = {
 }
 
 -- accepts a node (table) or a node name (string)
-local function get_node_info(node)
+local function get_node_cbox(node)
 	if type(node) == "string" then
+		log.action("get_node_cbox: creating dummy node for %s", dump(node))
 		node = { name=node, param2=0 }
+	else
+		log.action("get_node_cbox: called on %s", dump(node))
 	end
 	local info = info_cache[node.name]
 
 	-- handle cached results
 	if info == true then
-		log.action("get_node_info: %s -> true", node.name)
+		log.action("get_node_cbox: %s -> true", node.name)
 		return {} -- defaults
 	elseif info == false then
-		log.action("get_node_info: %s -> false", node.name)
+		log.action("get_node_cbox: %s -> false", node.name)
 		return nil -- no collisions
 	elseif info == nil then
 		info = {}
 		info_cache[node.name] = info
-		log.action("get_node_info: %s -> creating", node.name)
+		log.action("get_node_cbox: %s -> creating", node.name)
 	else
 		local p2
 		if info.norot then
@@ -242,7 +249,7 @@ local function get_node_info(node)
 		end
 		local ni = info[p2]
 		if ni ~= nil then
-			log.action("get_node_info: %s -> cached %s", node.name, p2)
+			log.action("get_node_cbox: %s -> cached %s %s", node.name, p2, dump(ni))
 			return ni
 		end
 	end
@@ -256,16 +263,16 @@ local function get_node_info(node)
 		local is_full, cbox, p2 = node_get_collision_box(dummy_node, false)
 		if is_full then
 			info_cache[node.name] = true -- full, no need to mess with cbox
-			log.action("get_node_info: %s -> create true", node.name)
+			log.action("get_node_cbox: %s -> create true", node.name)
 			return {}
 		elseif not cbox then
 			info_cache[node.name] = false -- no cbox
-			log.action("get_node_info: %s -> create false", node.name)
+			log.action("get_node_cbox: %s -> create false", node.name)
 			return nil
 		end
 		if not p2 then
 			info.norot = true
-			log.action("get_node_info: %s -> create norot", node.name)
+			log.action("get_node_cbox: %s -> create norot", node.name)
 		end
 
 		-- double check for a full box (should be done in node_get_collision_box())
@@ -274,11 +281,11 @@ local function get_node_info(node)
 		--   cbox_mm[4] >= 0.5 and cbox_mm[5] >= 0.5 and cbox_mm[6] >= 0.5
 		--then
 		--	info_cache[node.name] = true
-		--	log.action("get_node_info: %s -> create true check", node.name)
+		--	log.action("get_node_cbox: %s -> create true check", node.name)
 		--	return {}
 		--end
 		info.cbox = cbox
-		log.action("get_node_info: %s -> create cbox %s", node.name, dump(cbox))
+		log.action("get_node_cbox: %s -> create cbox %s", node.name, box_tostring(cbox))
 	end
 
 	local p2
@@ -292,18 +299,29 @@ local function get_node_info(node)
 	if p2 > 0 then
 		cbox = rotate.box_facedir(cbox, p2)
 	end
-	log.action("get_node_info: %s -> rotate cbox %s", node.name, dump(cbox))
+	log.action("get_node_cbox: %s -> rotate %s cbox %s", node.name, p2, box_tostring(cbox))
 
 	local ni = {}
 	for k, v in pairs(box_xy) do
-		log.action("probe %s %s", k, box_tostring(v))
+		--log.action("probe %s %s", k, box_tostring(v))
 		ni['bot'..k], ni['top'..k] = box_y_probe(cbox, v)
 	end
+
+	-- find maxy/miny
+	local maxy, miny
+	for k, v in pairs(ni) do
+		miny = math.min(miny or 1, v)
+		maxy = math.max(maxy or -1, v)
+	end
+	ni.maxy = maxy
+	ni.miny = miny
+
 	-- see if we can add "top_all" and "bot_all"
 	ni.top_all = true
 	for k, v in pairs(ni) do
-		if k ~= "top" and string.find(k, "top") == 1 then
-			if v ~= ni.top then
+		if k ~= "top" and k ~= "top_all" and string.find(k, "top") == 1 then
+			if not float_close(v, ni.top, 0.001) then
+				log.action("mismatch: %s vs %s", v, ni.top)
 				ni.top_all = false
 				break
 			end
@@ -311,8 +329,9 @@ local function get_node_info(node)
 	end
 	ni.bot_all = true
 	for k, v in pairs(ni) do
-		if k ~= "bot" and string.find(k, "bot") == 1 then
-			if v ~= ni.bot then
+		if k ~= "bot" and k ~= "bot_all" and string.find(k, "bot") == 1 then
+			if not float_close(v, ni.bot, 0.001) then
+				log.action("mismatch: %s vs %s", v, ni.bot)
 				ni.bot_all = false
 				break
 			end
@@ -320,8 +339,9 @@ local function get_node_info(node)
 	end
 
 	info[p2] = ni
+	log.action("get_node_cbox: result %s %s -> %s", node.name, p2, dump(ni))
 	return ni
 end
-node_cbox_cache.get_node_info = get_node_info
+node_cbox_cache.get_node_cbox = get_node_cbox
 
 return node_cbox_cache

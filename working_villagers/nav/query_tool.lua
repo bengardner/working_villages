@@ -7,6 +7,8 @@ local tool_name = "working_villages:query_tool"
 local log = working_villages.require("log")
 local func = working_villages.require("jobs/util")
 local node_cbox_cache = working_villages.require("nav/node_cbox_cache")
+local mapblock_moves = working_villages.require("nav/mapblock_moves")
+local mapblock_info = working_villages.require("nav/mapblock_info")
 
 local function log_object(obj)
 	log.action(" + object.get_pos() -> %s",
@@ -232,10 +234,15 @@ local function query_tool_do_stuff(user, pointed_thing, is_use)
 		local nodedef = minetest.registered_nodes[node.name]
 		local node_floor = get_node_floor(pos)
 
-		local ni = node_cbox_cache.get_node_info(node)
+		log.action("query_tool: calling node_cbox_cache.get_node_cbox")
+		local ni = node_cbox_cache.get_node_cbox(node)
+		local mbi = mapblock_info.decode(mapblock_info.get(node))
+		local hh = mapblock_moves.standable_height_at(pos, 4, true, true)
+		local hha = mapblock_moves.standable_height_at(pointed_thing.above, 4, true, true)
 
-		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s floor=%s %s",
-			minetest.pos_to_string(pos), node.name, node.param1, node.param2, minetest.get_node_light(pos), tostring(node_floor), dump(ni))
+		log.action("query_tool: node @ %s name='%s' param1=%s param2=%s light=%s h=%s ha=%s %s %s",
+			minetest.pos_to_string(pos), node.name, node.param1, node.param2,
+			minetest.get_node_light(pos), hh, hha, dump(ni), dump(mbi))
 		if nodedef.paramtype2 == "facedir" then
 			local dir = minetest.facedir_to_dir(node.param2)
 			log.action(" ++ facedir %s rot=%d", minetest.pos_to_string(dir), bit.band(node.param2, 0x1f))

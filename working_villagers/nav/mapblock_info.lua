@@ -18,7 +18,10 @@ b0:3 : cbox_type enum (0-15) - this holds a brief classification of the node
 	5 : door or gate (walkable, but treated as non-walkable)
 	6 : liquid (b4:6 contains info)
 	7 : climbable (ladder, scaffolding, etc) (b4:6 contains info)
-	8..14 : TBD
+	8 : chair, bench, other node meant for sitting. don't include in path. (avoid?)
+	9 : bed, mat, etc, sleep spot. avoid walking. (avoid?)
+	10: misc furniture nodes that generally should not be walked on (avoid?)
+	11..14 : TBD
 b4:6 : param, varies by cbox_type
 	cbox_type=2,3 : (number, 0-7) node height rounded up to 1/9 increments (0-7 => 1/9-8/9)
 		0=1/9 h=0.111 y=-0.388
@@ -43,7 +46,7 @@ b4:6 : param, varies by cbox_type
 
 b7 : avoid node, don't stand on or be in the node.
 	- node causes damage (lava, fire, thorn bush, razorwire, etc.)
-	- not allowed to walk/stand on the node ("group:leaves", "group:bed", fence, quicksand)
+	- not allowed to walk/stand on the node ("group:leaves", "group:bed", fence, quicksand, ??)
 
 A hash over the resultant bytes for chunk should be used to detect "real" changes.
 For example, changing a node from "default:blueberry_bush_leaves" to
@@ -116,7 +119,50 @@ local mapblock_info = {}
 -- cached data
 local cache_node_info = {} -- { p2m=3, ni=num, p2ni={ [p2]=num } }
 
+local node_type_enum = {
+	[0] = "clear",
+	[1] = "solid",
+	[2] = "floor",   -- param: "height" 0..1
+	[3] = "ceiling", -- param: "height" 0..1
+	[4] = "cbox",
+	[5] = "door",    -- param: "lockable"
+	[6] = "liquid",
+	[7] = "climb",   -- param: "full", "4dir"
+	[8] = "seat",
+	[9] = "bed",
+	[10]= "furniture", -- TBD
+}
+
 -------------------------------------------------------------------------------
+
+-- decode the info byte to something that is easier to use in code
+function mapblock_info.decode(value)
+	local ii = {
+		evalue=bit.band(value, 0x0f),
+		eparam=bit.band(bit.rshift(value, 4), 0x07),
+	}
+	ii.name = node_type_enum[ii.evalue]
+	if not ii.name then
+		log.warning("mapblock_info.decode: no name for %s [%s]", ii.evalue, tostring(value))
+		return nil
+	end
+	ii.avoid = bit.band(value, 0x80) ~= 0
+	if ii.name == "floor" or ii.name == "ceiling" then
+		ii.height = (ii.eparam + 1) / 9.0
+	elseif ii.name == "cbox" then
+		ii.height = (ii.eparam + 1) / 8.0
+	elseif ii.name == "door" then
+		ii.lockable = bit.band(ii.eparam, 1) ~= 0
+	elseif ii.name == "liquid" then
+		ii.drowning = bit.band(ii.eparam, 1) ~= 0
+	elseif ii.name == "climb" then
+		ii.fullnode = bit.band(ii.eparam, 4) ~= 0
+		if not ii.fullnode then
+			ii.facedir = bit.band(ii.eparam, 3)
+		end
+	end
+	return ii
+end
 
 -- calculate the base info with param2=0
 -- returns the node info byte, need_param2
@@ -130,11 +176,12 @@ local function node_info_byte_calculate(node)
 
 	-- pack the enum, param, avoid flags
 	local function build_val(ve, vp)
-		local val = ve + bit.lshift(vp, 3)
+		local val = ve + bit.lshift(vp, 4)
 		if val_avoid then -- use function global
 			val = bit.bor(val, 0x80)
 		end
-		log.action("node_info %s => 0x%02x", node_name, val)
+		log.action("node_info_byte_calc: %s => 0x%02x (%d) (ve=%s vp=%s, avoid=%s) %s",
+			node.name, val, val, ve, vp, tostring(val_avoid), dump(mapblock_info.decode(val)))
 		return val
 	end
 
@@ -144,7 +191,7 @@ local function node_info_byte_calculate(node)
 	end
 
 	-- avoid due to forbidden
-	if minetest.get_item_group(node_name, "leaves") > 0 then
+	if minetest.get_item_group(node.name, "leaves") > 0 then
 		val_avoid = true
 	end
 
@@ -153,12 +200,25 @@ local function node_info_byte_calculate(node)
 		-- yes, the node can collide
 
 		-- check for door
-		if string.find(node_name, "doors:door") == 1 then
+		if string.find(node.name, "doors:door") == 1 then
 			-- doors DO use param2, but because they are fake non-walkable we don't care
 			return build_val(5, 0) -- door
 		end
 
-		local ni = node_cbox_cache.get_node_info(node_name)
+		if minetest.get_item_group(node.name, "chair") > 0 or
+			minetest.get_item_group(node.name, "bench") > 0 or
+			string.find(node.name, "chair_") or string.find(node.name, "_chair") or
+			string.find(node.name, "bench_") or string.find(node.name, "_bench")
+		then
+			return build_val(8, 0) -- chair/bench
+		end
+
+		-- bed check
+		if minetest.get_item_group(node.name, "bed") > 0 then
+			return build_val(9, 0) -- bed
+		end
+
+		local ni = node_cbox_cache.get_node_cbox(node)
 		if ni == nil then
 			return build_val(0, 0) -- no collisions
 		end
@@ -167,23 +227,32 @@ local function node_info_byte_calculate(node)
 		end
 		-- check for a custom cbox (5 probe points don't have same Y value)
 		if ni.top_all ~= true or ni.bot_all ~= true then
-			return build_val(4, 0) -- non-uniform cbox
+			-- We need to support a max height of 1, so use /8
+			local ry = math.max(0, math.floor(8 * (ni.maxy + 0.5) + 0.5) -1)
+			return build_val(4, ry) -- non-uniform cbox
 		end
 
-		-- compute the floor height (top)
-		local ry = math.round(9 * (ni.top + 0.5) - 0.5)
-		-- if floor is too high, then it is solid on top, try ceiling
-		if ry <= 7 then
-			if ry < 0 then ry = 0 end -- minimum height is 0.111 (1/9)
-			return build_val(2, ry) -- floor height
+		local maxy00 = math.round(ni.maxy * 100)
+		local miny00 = math.round(ni.miny * 100)
+		log.action("node %s %s miny=%s maxy=%s", node.name, node.param2, miny00, maxy00)
+		if miny00 == -50 then
+			log.action("node hits bottom")
+			-- compute the floor height (top)
+			local ry = math.max(0, math.round(9 * (ni.top + 0.5) - 0.5))
+			-- if floor is too high, then it is solid on top, try ceiling
+			if ry <= 7 then
+				return build_val(2, ry) -- floor height
+			end
 		end
-		-- try the ceiling height
-		ry = math.round(9 * (ni.bot +0.5) - 1.5)
-		-- cap ceiling height at 0.889 (8/9)
-		if ry >= 0 then
-			if ry > 7 then ry = 7 end
-			return build_val(3, ry) -- ceiling height
+		if maxy00 == 50 then
+			log.action("node hits top")
+			-- cap ceiling height at 0.889 (8/9)
+			ry = math.min(7, math.round(9 * (ni.bot + 0.5) - 1.5))
+			if ry >= 0 then
+				return build_val(3, ry) -- ceiling height
+			end
 		end
+
 		return build_val(1, 0) -- ceiling is too low, call it a solid node
 	end
 
@@ -225,15 +294,18 @@ local function node_info_get(node)
 		-- get the node info byte for this rotation
 		local ni = node_info_byte_calculate(node)
 		if not ci.p2m then
+			log.action("node_info: create %s => %s (no p2m)", node.name, ni)
 			ci.ni = ni
 		else
 			local p2 = bit.band(node.param2, ci.p2m)
+			log.action("node_info: create %s %s => %s p2=%s", node.name, node.param2, ni, p2)
 			ci.p2ni = { [p2] = ni }
 		end
 		return ni
 	end
 
 	if not ci.p2m then
+		log.action("node_info: cached %s => %s (no p2m)", node.name, ci.ni)
 		return ci.ni
 	end
 
@@ -241,7 +313,10 @@ local function node_info_get(node)
 	local ni = ci.p2ni[p2]
 	if not ni then
 		ni = node_info_byte_calculate(node)
+		log.action("node_info: create2 %s %s => %s p2=%s", node.name, node.param2, ni, p2)
 		ci.p2ni[p2] = ni
+	else
+		log.action("node_info: cached %s %s => %s p2=%s", node.name, node.param2, ni, p2)
 	end
 	return ni
 end
